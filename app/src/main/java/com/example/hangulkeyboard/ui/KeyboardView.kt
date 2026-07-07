@@ -288,12 +288,12 @@ private fun CenterSlot(
                 Spacer(Modifier.weight(0.25f))
             }
             1 -> {
-                MiniKey("◀") { onKey(Key.Action(ActionType.LEFT, "◀")) }
-                MiniKey("▶") { onKey(Key.Action(ActionType.RIGHT, "▶")) }
+                MiniKey("◀", repeatable = true) { onKey(Key.Action(ActionType.LEFT, "◀")) }
+                MiniKey("▶", repeatable = true) { onKey(Key.Action(ActionType.RIGHT, "▶")) }
             }
             2 -> {
-                MiniKey("▲") { onKey(Key.Action(ActionType.UP, "▲")) }
-                MiniKey("▼") { onKey(Key.Action(ActionType.DOWN, "▼")) }
+                MiniKey("▲", repeatable = true) { onKey(Key.Action(ActionType.UP, "▲")) }
+                MiniKey("▼", repeatable = true) { onKey(Key.Action(ActionType.DOWN, "▼")) }
             }
             3 -> {
                 MiniKey("esc") { onKey(Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)) }
@@ -317,17 +317,40 @@ private fun CenterSlot(
 private fun RowScope.MiniKey(
     label: String,
     active: Boolean = false,
+    repeatable: Boolean = false,
     onClick: () -> Unit,
 ) {
     val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    // 방향키 등은 꾹 누르면 백스페이스처럼 반복.
+    val inputModifier = if (repeatable) Modifier.pointerInput(Unit) {
+        detectTapGestures(
+            onPress = {
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                val job = scope.launch {
+                    onClick()
+                    delay(400)
+                    while (isActive) {
+                        onClick()
+                        delay(45)
+                    }
+                }
+                try {
+                    tryAwaitRelease()
+                } finally {
+                    job.cancel()
+                }
+            }
+        )
+    } else Modifier.clickable {
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        onClick()
+    }
     Box(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
-            .clickable {
-                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                onClick()
-            },
+            .then(inputModifier),
         contentAlignment = Alignment.Center
     ) {
         Surface(

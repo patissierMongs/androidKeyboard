@@ -335,6 +335,7 @@ class ImeService : InputMethodService(),
         val ic = currentInputConnection ?: return
         // 글자 입력은 선택영역을 대치하므로 선택 모드를 먼저 끈다.
         // (Ctrl 조합도 마찬가지 — 선택 후 Ctrl+C 가 Shift 없이 온전히 나가야 한다.)
+        val wasSelecting = selectActive
         selectActive = false
         // Ctrl/Alt 조합: 다음 키를 실제 키이벤트로 보낸다. 터미널/원격에서 Ctrl+C 등.
         // 한글 자판이면 자모를 그 자리의 QWERTY 키로 매핑해 조합을 유지한다(ㅂ→Q 등).
@@ -347,11 +348,15 @@ class ImeService : InputMethodService(),
             return
         }
         if (mode == KeyboardMode.KOREAN && text.isNotEmpty() && isJamo(text[0])) {
-            val committed = composer.input(text[0])
-            ic.beginBatchEdit()
             // 선택영역이 있으면 먼저 지운다 — setComposingText 는 에디터에 따라
             // 선택영역을 대치하지 않고 커서 자리에만 끼어드는 경우가 있다.
-            if (hasSelection) {
+            // hasSelection(onUpdateSelection)은 비동기라 빠른 입력 시 아직 갱신
+            // 전일 수 있으므로, 선택 모드였는지 + 에디터 동기 조회까지 함께 본다.
+            val selectionExists = wasSelecting || hasSelection ||
+                !ic.getSelectedText(0).isNullOrEmpty()
+            val committed = composer.input(text[0])
+            ic.beginBatchEdit()
+            if (selectionExists) {
                 ic.commitText("", 1)
                 hasSelection = false
             }
