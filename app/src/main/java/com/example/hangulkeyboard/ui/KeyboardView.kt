@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -22,13 +23,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +75,7 @@ fun KeyboardView(
     onPaste: (String) -> Unit,
     onPinToggle: (String) -> Unit,
     onToggleSelect: () -> Unit,
+    expectVowel: () -> Boolean = { false },
 ) {
     val shifted = shiftState != ShiftState.OFF
     // 분할이면 액션줄 방향키를 빼고 특수문자를 둔다(가운데 미니 방향키가 대신함).
@@ -86,6 +94,12 @@ fun KeyboardView(
     val stripMode = showClipboard && (splitGap <= 0f || clipInStrip)
     val slotClipMode = showClipboard && splitGap > 0f && !clipInStrip
 
+    // 클립 항목이 줄 수보다 많으면 맨 아래 칸을 ▲▼ 페이지 키로 쓴다.
+    val pagerNeeded = slotClipMode && clipItems.size > rows.size
+    val clipPerPage = if (pagerNeeded) rows.size - 1 else rows.size
+    var clipPage by remember(slotClipMode, clipItems.size) { mutableIntStateOf(0) }
+    val maxClipPage = if (clipItems.isEmpty()) 0 else (clipItems.size - 1) / clipPerPage
+
     Surface(color = Color(0xFFECEFF1)) {
         Column(
             modifier = Modifier
@@ -100,11 +114,13 @@ fun KeyboardView(
                 KeyRow(
                     keys = rowKeys,
                     compact = compact,
+                    firstRow = index == 0,
                     keyHeight = keyHeight,
                     shiftState = shiftState,
                     ctrlActive = ctrlActive,
                     altActive = altActive,
                     showClipboard = showClipboard,
+                    expectVowel = expectVowel,
                     onKey = onKey,
                     onKeyLong = onKeyLong,
                     gapContent = if (splitGap > 0f) {
@@ -115,6 +131,12 @@ fun KeyboardView(
                                 showClipboard = slotClipMode,
                                 selectActive = selectActive,
                                 clipItems = clipItems,
+                                clipPage = clipPage,
+                                clipPerPage = clipPerPage,
+                                pagerNeeded = pagerNeeded,
+                                onPage = { delta ->
+                                    clipPage = (clipPage + delta).coerceIn(0, maxClipPage)
+                                },
                                 onKey = onKey,
                                 onPaste = onPaste,
                                 onPinToggle = onPinToggle,
@@ -152,18 +174,20 @@ private fun splitWithGap(keys: List<Key>, gap: Float): List<Key> {
 private fun KeyRow(
     keys: List<Key>,
     compact: Boolean,
+    firstRow: Boolean,
     keyHeight: Float,
     shiftState: ShiftState,
     ctrlActive: Boolean,
     altActive: Boolean,
     showClipboard: Boolean,
+    expectVowel: () -> Boolean,
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
     gapContent: (@Composable () -> Unit)? = null,
 ) {
     val cellHeight = if (compact) (keyHeight * 0.77f).dp else keyHeight.dp
     Row(modifier = Modifier.fillMaxWidth()) {
-        keys.forEach { key ->
+        keys.forEachIndexed { i, key ->
             if (key is Key.Gap) {
                 if (gapContent != null) {
                     // 빈 칸도 그 줄의 키와 같은 높이의 셀 — 내용이 줄에 맞춰 박힌다.
@@ -187,7 +211,12 @@ private fun KeyRow(
                     altActive = altActive,
                     showClipboard = showClipboard,
                     compact = compact,
+                    firstRow = firstRow,
                     keyHeight = keyHeight,
+                    // 경계 스냅용 좌우 이웃 글자(한 글자 Char 키만, Gap 건너편은 제외).
+                    neighborLeft = (keys.getOrNull(i - 1) as? Key.Char)?.output?.singleOrNull(),
+                    neighborRight = (keys.getOrNull(i + 1) as? Key.Char)?.output?.singleOrNull(),
+                    expectVowel = expectVowel,
                     modifier = Modifier.weight(keyWeight(key)),
                     onKey = onKey,
                     onKeyLong = onKeyLong
@@ -200,7 +229,9 @@ private fun KeyRow(
 /**
  * 분할 시 각 줄 가운데 빈 칸의 내용.
  * 클립보드 모드: 위에서부터 줄당 클립 항목 하나(탭 = 붙여넣기, 길게 = 고정).
- * 커서 모드: 아래줄부터 선택 / ◀▶ / ▲▼ / esc / home·end / pgup·pgdn.
+ * 항목이 넘치면 맨 아래 칸이 ▲▼ 페이지 키가 된다.
+ * 커서 모드: 아래줄부터 선택 / ◀▶ / ▲▼ / esc·전체선택 / 복사·붙여넣기 /
+ * 잘라내기·되돌리기. (home/end/pgup/pgdn 은 터미널줄에 이미 있어 뺐다.)
  */
 @Composable
 private fun CenterSlot(
@@ -209,13 +240,24 @@ private fun CenterSlot(
     showClipboard: Boolean,
     selectActive: Boolean,
     clipItems: List<Pair<String, Boolean>>,
+    clipPage: Int,
+    clipPerPage: Int,
+    pagerNeeded: Boolean,
+    onPage: (Int) -> Unit,
     onKey: (Key) -> Unit,
     onPaste: (String) -> Unit,
     onPinToggle: (String) -> Unit,
     onToggleSelect: () -> Unit,
 ) {
     if (showClipboard) {
-        val item = clipItems.getOrNull(rowFromTop)
+        if (pagerNeeded && rowFromBottom == 0) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                MiniKey("▲") { onPage(-1) }
+                MiniKey("▼") { onPage(+1) }
+            }
+            return
+        }
+        val item = clipItems.getOrNull(clipPage * clipPerPage + rowFromTop)
         when {
             item != null -> ClipItem(
                 text = item.first,
@@ -254,12 +296,12 @@ private fun CenterSlot(
                 MiniKey("전체") { onKey(Key.Action(ActionType.SELECT_ALL, "전체")) }
             }
             4 -> {
-                MiniKey("home") { onKey(Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME)) }
-                MiniKey("end") { onKey(Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END)) }
+                MiniKey("복사") { onKey(Key.Action(ActionType.COPY, "복사")) }
+                MiniKey("붙여") { onKey(Key.Action(ActionType.PASTE, "붙여")) }
             }
             5 -> {
-                MiniKey("pgup") { onKey(Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP)) }
-                MiniKey("pgdn") { onKey(Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN)) }
+                MiniKey("잘라") { onKey(Key.Action(ActionType.CUT, "잘라")) }
+                MiniKey("되돌") { onKey(Key.Action(ActionType.UNDO, "되돌")) }
             }
         }
     }
@@ -391,7 +433,11 @@ private fun KeyButton(
     altActive: Boolean,
     showClipboard: Boolean,
     compact: Boolean,
+    firstRow: Boolean,
     keyHeight: Float,
+    neighborLeft: Char?,
+    neighborRight: Char?,
+    expectVowel: () -> Boolean,
     modifier: Modifier,
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
@@ -435,6 +481,9 @@ private fun KeyButton(
     // 한/A 는 길게 누르면 원격 호스트 한/영 전환 키를 보낸다.
     val hasLongPress = key is Key.Action && key.type == ActionType.LANGUAGE
     val isSpace = key is Key.Action && key.type == ActionType.SPACE
+    val isChar = key is Key.Char
+    // 키 프리뷰(눌린 글쇠 풍선) 상태. 글자 키만.
+    var pressed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val pressModifier = when {
         // 백스페이스: 꾹 누르면 연속 삭제(다른 키보드와 동일).
@@ -507,14 +556,39 @@ private fun KeyButton(
                 }
             )
         }
+        // 글자 키: 터치 x 좌표를 받아 경계 스냅(모음이 올 자리에서 자음 키의
+        // 가장자리를 눌렀으면 이웃 모음으로 보정)을 적용한다.
+        isChar -> Modifier.pointerInput(key, neighborLeft, neighborRight) {
+            detectTapGestures(onTap = { pos ->
+                press(resolveEdgeSnap(key as Key.Char, pos.x, size.width.toFloat(),
+                    neighborLeft, neighborRight, expectVowel))
+            })
+        }
         else -> Modifier.clickable { press(key) }
     }
+    // 프리뷰용 눌림 추적. 입력 제스처와 별개로 down/up 만 관찰한다.
+    val previewModifier = if (isChar) Modifier.pointerInput(Unit) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            pressed = true
+            try {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    if (event.changes.all { !it.pressed }) break
+                }
+            } finally {
+                pressed = false
+            }
+        }
+    } else Modifier
 
     // 바깥 Box = 셀 전체(터치 영역, 데드존 없음). 안쪽 Surface = 보이는 키(여백만큼 인셋).
     Box(
         modifier = modifier
             .height(cellHeight)
-            .then(pressModifier),
+            .zIndex(if (pressed) 10f else 0f)
+            .then(pressModifier)
+            .then(previewModifier),
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -538,8 +612,57 @@ private fun KeyButton(
                 )
             }
         }
+        // 키 프리뷰: 눌린 글쇠를 위(맨 윗줄은 제자리)에 크게 띄운다. 손가락에
+        // 가린 키를 즉시 확인해 오타를 빨리 인지하게 한다.
+        if (pressed && isChar) {
+            Surface(
+                color = Color(0xFF455A64),
+                shape = RoundedCornerShape(8.dp),
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = if (firstRow) (-6).dp else -cellHeight * 0.95f)
+                    .zIndex(11f)
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                )
+            }
+        }
     }
 }
+
+/**
+ * 경계 스냅: 초성만 있는 상태(다음은 모음일 확률이 높음)에서 자음 키의
+ * 가장자리(폭의 22% 이내)를 눌렀고 그쪽 이웃이 모음이면 그 모음으로 보정한다.
+ * 확신이 없는 상황(가운데 터치, 모음 키, 조합 문맥 아님)은 건드리지 않는다.
+ */
+private fun resolveEdgeSnap(
+    key: Key.Char,
+    x: Float,
+    width: Float,
+    neighborLeft: Char?,
+    neighborRight: Char?,
+    expectVowel: () -> Boolean,
+): Key {
+    val self = key.output.singleOrNull() ?: return key
+    if (!isJamoConsonant(self) || !expectVowel()) return key
+    val edge = width * 0.22f
+    if (x < edge && neighborLeft != null && isJamoVowel(neighborLeft)) {
+        return Key.Char(neighborLeft.toString())
+    }
+    if (x > width - edge && neighborRight != null && isJamoVowel(neighborRight)) {
+        return Key.Char(neighborRight.toString())
+    }
+    return key
+}
+
+private fun isJamoConsonant(c: Char): Boolean = c in 'ㄱ'..'ㅎ'
+private fun isJamoVowel(c: Char): Boolean = c in 'ㅏ'..'ㅣ'
 
 private fun resolveRows(
     mode: KeyboardMode,

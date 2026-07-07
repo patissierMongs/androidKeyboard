@@ -79,6 +79,9 @@ class ImeService : InputMethodService(),
     private var foldedProfile by mutableStateOf(false)
     // 선택 모드: 켜져 있는 동안 커서 이동 키에 Shift 를 실어 텍스트를 선택한다.
     private var selectActive by mutableStateOf(false)
+    // 에디터에 선택영역이 있는지(onUpdateSelection 으로 추적). 조합 입력 전에
+    // 선택영역을 명시적으로 지우는 데 쓴다.
+    private var hasSelection = false
 
     // 클립보드: 자체 히스토리(최근 항목) + 고정 항목 + 표시 여부.
     private val clipboard by lazy {
@@ -89,12 +92,22 @@ class ImeService : InputMethodService(),
     private var showClipboard by mutableStateOf(false)
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
+    // 설정 앱에서 값을 바꾸면 키보드를 다시 열지 않아도 즉시 반영한다.
+    // (prefs 는 리스너를 약참조로 들고 있으므로 필드로 강참조를 유지해야 한다.)
+    private val prefsListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key != null && (key.startsWith(PROFILE_FOLDED) || key.startsWith(PROFILE_UNFOLDED))) {
+                loadProfile()
+            }
+        }
+
     override fun onCreate() {
         savedStateController.performRestore(null)
         super.onCreate()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         pinned = prefs.getBoolean(KEY_PINNED, false)
         loadClips()
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
     }
 
@@ -135,7 +148,9 @@ class ImeService : InputMethodService(),
                     onKeyLong = ::onKeyLong,
                     onPaste = ::onPasteClip,
                     onPinToggle = ::onPinToggle,
-                    onToggleSelect = { selectActive = !selectActive }
+                    onToggleSelect = { selectActive = !selectActive },
+                    // 초성만 있는 상태 → 다음 자모는 모음일 확률이 높다(경계 스냅용).
+                    expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel }
                 )
             }
         }
@@ -172,6 +187,18 @@ class ImeService : InputMethodService(),
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         loadProfile()
+    }
+
+    /** 커서/선택 변화를 추적해 선택영역 존재 여부를 기억한다. */
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int,
+        newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
+        )
+        hasSelection = newSelStart != newSelEnd
     }
 
     /**
@@ -222,6 +249,7 @@ class ImeService : InputMethodService(),
     }
 
     override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.removePrimaryClipChangedListener(clipListener) }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
@@ -309,6 +337,12 @@ class ImeService : InputMethodService(),
         if (mode == KeyboardMode.KOREAN && text.isNotEmpty() && isJamo(text[0])) {
             val committed = composer.input(text[0])
             ic.beginBatchEdit()
+            // 선택영역이 있으면 먼저 지운다 — setComposingText 는 에디터에 따라
+            // 선택영역을 대치하지 않고 커서 자리에만 끼어드는 경우가 있다.
+            if (hasSelection) {
+                ic.commitText("", 1)
+                hasSelection = false
+            }
             if (committed.isNotEmpty()) ic.commitText(committed, 1)
             ic.setComposingText(composer.composing, 1)
             ic.endBatchEdit()
@@ -347,15 +381,13 @@ class ImeService : InputMethodService(),
             ActionType.ALT -> altActive = !altActive
             ActionType.CLIPBOARD -> showClipboard = !showClipboard
 
-            // 전체선택: Ctrl+A 키 이벤트를 그대로 전송(원격/터미널에서도 동작).
-            ActionType.SELECT_ALL -> {
-                commitComposing()
-                sendKeyWithMeta(
-                    ic, KeyEvent.KEYCODE_A,
-                    KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
-                )
-                clearMods()
-            }
+            // 전체선택/복사/붙여넣기/잘라내기/되돌리기: Ctrl 조합 키 이벤트를
+            // 그대로 전송(원격/터미널에서도 동작). 실행 후 선택 모드는 해제.
+            ActionType.SELECT_ALL -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_A)
+            ActionType.COPY -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_C)
+            ActionType.PASTE -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_V)
+            ActionType.CUT -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_X)
+            ActionType.UNDO -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_Z)
 
             ActionType.SPACE -> {
                 commitComposing()
@@ -467,6 +499,14 @@ class ImeService : InputMethodService(),
     /** 선택 모드의 Shift 비트 — 커서 이동 키에만 싣는다(Shift+방향키 = 선택). */
     private fun selectionMeta(): Int =
         if (selectActive) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
+
+    /** Ctrl+[keyCode] 단축키 전송(전체선택/복사/붙여넣기 등). 선택 모드는 해제. */
+    private fun sendCtrlShortcut(ic: android.view.inputmethod.InputConnection, keyCode: Int) {
+        commitComposing()
+        selectActive = false
+        sendKeyWithMeta(ic, keyCode, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
+        clearMods()
+    }
 
     private fun clearMods() {
         ctrlActive = false

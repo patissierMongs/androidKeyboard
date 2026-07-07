@@ -20,7 +20,8 @@ sealed interface Key {
 enum class ActionType {
     SHIFT, BACKSPACE, LANGUAGE, SYMBOLS, SPACE, ENTER, COMMA, PERIOD, PIN,
     LEFT, RIGHT, UP, DOWN,
-    CTRL, ALT, CLIPBOARD, SELECT_ALL
+    CTRL, ALT, CLIPBOARD,
+    SELECT_ALL, COPY, PASTE, CUT, UNDO
 }
 
 /** 자판 모드. */
