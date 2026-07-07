@@ -281,7 +281,12 @@ private fun CenterSlot(
     }
     Row(modifier = Modifier.fillMaxSize()) {
         when (rowFromBottom) {
-            0 -> MiniKey("선택", active = selectActive) { onToggleSelect() }
+            // 선택 토글은 칸 전체 대신 가운데 2/3 폭만 차지(오터치 완화).
+            0 -> {
+                Spacer(Modifier.weight(0.25f))
+                MiniKey("선택", active = selectActive) { onToggleSelect() }
+                Spacer(Modifier.weight(0.25f))
+            }
             1 -> {
                 MiniKey("◀") { onKey(Key.Action(ActionType.LEFT, "◀")) }
                 MiniKey("▶") { onKey(Key.Action(ActionType.RIGHT, "▶")) }
@@ -699,11 +704,13 @@ private fun labelFor(key: Key, shiftState: ShiftState): String = when (key) {
 }
 
 private fun keyWeight(key: Key): Float = when (key) {
-    is Key.Action -> when (key.type) {
+    is Key.Action -> when {
+        // 레이아웃이 명시한 폭이 있으면 우선(스페이스 중앙쪽 확장 등).
+        key.weight > 0f -> key.weight
         // 스페이스가 좌우 두 개라 각각 살짝만 넓게.
-        ActionType.SPACE -> 1.5f
-        ActionType.ENTER -> 1.6f
-        ActionType.SHIFT, ActionType.BACKSPACE -> 1.5f
+        key.type == ActionType.SPACE -> 1.5f
+        key.type == ActionType.ENTER -> 1.6f
+        key.type == ActionType.SHIFT || key.type == ActionType.BACKSPACE -> 1.5f
         // ?123·한/A 는 일반 키와 같은 폭(else = 1f)
         else -> 1f
     }

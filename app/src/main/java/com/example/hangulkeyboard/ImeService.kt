@@ -189,7 +189,13 @@ class ImeService : InputMethodService(),
         loadProfile()
     }
 
-    /** 커서/선택 변화를 추적해 선택영역 존재 여부를 기억한다. */
+    /**
+     * 커서/선택 변화 추적. 선택영역 존재 여부를 기억하고, 한글 조합 중에
+     * 사용자가 터치 등으로 커서를 조합 영역 밖으로 옮기면 조합을 그 자리에서
+     * 확정하고 오토마타를 리셋한다 — 안 그러면 다음 자모가 멀리 있는 이전
+     * 글자에 합쳐지는 버그가 생긴다. (정상 조합 중에는 커서가 항상 조합
+     * 영역(candidates) 끝에 온다.)
+     */
     override fun onUpdateSelection(
         oldSelStart: Int, oldSelEnd: Int,
         newSelStart: Int, newSelEnd: Int,
@@ -199,6 +205,12 @@ class ImeService : InputMethodService(),
             oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
         )
         hasSelection = newSelStart != newSelEnd
+        if (!composer.isEmpty &&
+            (candidatesStart == -1 || newSelStart != candidatesEnd || newSelEnd != candidatesEnd)
+        ) {
+            composer.flush()  // 글자는 이미 에디터에 있으므로 상태만 리셋하고
+            currentInputConnection?.finishComposingText()  // 조합 영역을 확정한다.
+        }
     }
 
     /**

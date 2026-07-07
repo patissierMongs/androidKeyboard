@@ -7,8 +7,8 @@ sealed interface Key {
     /** 일반 문자 키. [label] 은 화면 표시, [output] 은 실제 입력값(없으면 label). [weight] 는 가로 폭. */
     data class Char(val label: String, val output: String = label, val weight: Float = 1f) : Key
 
-    /** 특수 기능 키. */
-    data class Action(val type: ActionType, val label: String = "") : Key
+    /** 특수 기능 키. [weight] 가 0 보다 크면 타입별 기본 폭 대신 쓴다. */
+    data class Action(val type: ActionType, val label: String = "", val weight: Float = 0f) : Key
 
     /** 하드웨어 keyCode 를 그대로 보내는 키(Del/Home/End/PgUp/PgDn 등). */
     data class KeyCode(val label: String, val code: Int) : Key
@@ -166,13 +166,17 @@ object KeyboardLayouts {
         Key.Action(ActionType.SYMBOLS, "?123"),
         Key.Action(ActionType.LANGUAGE, "한/A"),
         if (bottomArrows) Key.Action(ActionType.LEFT, "◀") else Key.Char("!"),
-        Key.Action(ActionType.SPACE, ""),
-        if (bottomArrows) Key.Action(ActionType.UP, "▲") else Key.Char("("),
+        // 스페이스는 가운데 쪽으로 살짝 넓히고(+0.06) 그만큼 가운데 쪽 이웃을
+        // 줄여, 둘 사이 경계만 움직이고 다른 키 경계는 그대로 둔다.
+        Key.Action(ActionType.SPACE, "", weight = 1.56f),
+        if (bottomArrows) Key.Action(ActionType.UP, "▲", weight = 0.94f)
+        else Key.Char("(", weight = 0.94f),
         if (bottomArrows) Key.Action(ActionType.DOWN, "▼") else Key.Char(")"),
         Key.Char("?"),
         // 분할이면 , 를 오른쪽 . 옆으로 보내고 이 자리는 / 가 차지한다.
-        if (bottomArrows) Key.Action(ActionType.COMMA, ",") else Key.Char("/"),
-        Key.Action(ActionType.SPACE, ""),
+        if (bottomArrows) Key.Action(ActionType.COMMA, ",", weight = 0.94f)
+        else Key.Char("/", weight = 0.94f),
+        Key.Action(ActionType.SPACE, "", weight = 1.56f),
         if (bottomArrows) Key.Action(ActionType.RIGHT, "▶") else Key.Action(ActionType.COMMA, ","),
         Key.Action(ActionType.PERIOD, "."),
         Key.Action(ActionType.ENTER, "↵")
