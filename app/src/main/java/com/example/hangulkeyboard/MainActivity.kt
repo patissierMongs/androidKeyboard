@@ -2,19 +2,25 @@ package com.example.hangulkeyboard
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -28,12 +34,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.hangulkeyboard.ui.AuxRows
 
 /**
- * 키보드 활성화 안내 + 설정(분할 공백) + 테스트 입력칸.
+ * 키보드 활성화 안내 + 접힘/펼침 프로파일별 설정 + 테스트 입력칸.
  * IME 자체는 [ImeService] 에 있다.
  */
 class MainActivity : ComponentActivity() {
@@ -61,8 +70,6 @@ class MainActivity : ComponentActivity() {
 private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("ime_prefs", Context.MODE_PRIVATE) }
-
-    var splitGap by remember { mutableFloatStateOf(prefs.getFloat("split_gap", 0f)) }
     var testText by remember { mutableStateOf("") }
 
     Column(
@@ -83,22 +90,33 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
         Button(onClick = onEnable) { Text("키보드 켜기 (시스템 설정)") }
         Button(onClick = onChoose) { Text("키보드 선택") }
 
-        // ── 분할 키보드 공백 조절 ──
-        Text(
-            "분할 간격 (가운데 공백): ${"%.1f".format(splitGap)}",
-            fontSize = 16.sp
+        HorizontalDivider()
+
+        // 프로파일은 ImeService 가 smallestScreenWidthDp(600 기준)로 자동 선택한다.
+        ProfileSection(
+            title = "펼쳤을 때 (메인 화면)",
+            prefix = "unfolded_",
+            prefs = prefs,
+            defaultSplit = 2f,
+            defaultHeight = 52f,
+            defaultAux = AuxRows.ALL
         )
-        Slider(
-            value = splitGap,
-            onValueChange = { splitGap = it },
-            onValueChangeFinished = {
-                prefs.edit().putFloat("split_gap", splitGap).apply()
-            },
-            valueRange = 0f..4f,
-            modifier = Modifier.fillMaxWidth()
+
+        HorizontalDivider()
+
+        ProfileSection(
+            title = "접었을 때 (커버 화면)",
+            prefix = "folded_",
+            prefs = prefs,
+            defaultSplit = 0f,
+            defaultHeight = 56f,
+            defaultAux = AuxRows.TERMINAL
         )
+
         Text(
-            "0 이면 분할 안 함. 값을 바꾼 뒤 아래 칸을 다시 누르면 적용됩니다.",
+            "분할 간격이 0 이면 분할하지 않습니다. 분할하면 가운데 공간에\n" +
+                "커서 패드가 표시되고, 📋 키로 클립보드와 전환합니다.\n" +
+                "값을 바꾼 뒤 키보드를 다시 열면 적용됩니다.",
             fontSize = 13.sp
         )
 
@@ -109,5 +127,86 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
             label = { Text("테스트 입력") },
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+/** 접힘/펼침 한쪽 프로파일의 설정 묶음. 키는 [prefix] 를 붙여 저장한다. */
+@Composable
+private fun ProfileSection(
+    title: String,
+    prefix: String,
+    prefs: SharedPreferences,
+    defaultSplit: Float,
+    defaultHeight: Float,
+    defaultAux: AuxRows,
+) {
+    var split by remember { mutableFloatStateOf(prefs.getFloat(prefix + "split_gap", defaultSplit)) }
+    var height by remember { mutableFloatStateOf(prefs.getFloat(prefix + "key_height", defaultHeight)) }
+    var aux by remember {
+        mutableStateOf(
+            runCatching { AuxRows.valueOf(prefs.getString(prefix + "aux_rows", null) ?: "") }
+                .getOrDefault(defaultAux)
+        )
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+
+        Text("분할 간격 (가운데 공백): ${"%.1f".format(split)}", fontSize = 14.sp)
+        Slider(
+            value = split,
+            onValueChange = { split = it },
+            onValueChangeFinished = {
+                prefs.edit().putFloat(prefix + "split_gap", split).apply()
+            },
+            valueRange = 0f..4f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("키 높이: ${"%.0f".format(height)} dp", fontSize = 14.sp)
+        Slider(
+            value = height,
+            onValueChange = { height = it },
+            onValueChangeFinished = {
+                prefs.edit().putFloat(prefix + "key_height", height).apply()
+            },
+            valueRange = 44f..64f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("상단 보조줄", fontSize = 14.sp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val options = listOf(
+                AuxRows.ALL to "전체",
+                AuxRows.TERMINAL_NUMBER to "터미널+숫자",
+                AuxRows.TERMINAL to "터미널만",
+                AuxRows.NONE to "없음"
+            )
+            options.forEach { (value, label) ->
+                val selected = aux == value
+                Button(
+                    onClick = {
+                        aux = value
+                        prefs.edit().putString(prefix + "aux_rows", value.name).apply()
+                    },
+                    colors = if (selected) ButtonDefaults.buttonColors()
+                    else ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE0E0E0),
+                        contentColor = Color(0xFF444444)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(label, fontSize = 12.sp)
+                }
+            }
+        }
     }
 }

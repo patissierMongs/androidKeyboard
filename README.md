@@ -1,72 +1,90 @@
-# 한글 개발자 키보드
+# 한글 키보드 (Android IME · Jetpack Compose)
 
-터미널·코딩·원격 데스크탑용 키를 기본으로 넣은 안드로이드 한글 키보드입니다.
+영문 QWERTY 와 한글 두벌식을 모두 지원하는 안드로이드 입력기(IME)입니다.
+UI 는 Jetpack Compose 로 그리고, 한글 조합은 직접 구현한 오토마타로 처리합니다.
 
-<img src="docs/screenshots/korean.png" width="420">
+## 기능
 
-## 설치
+- **한글 두벌식** 입력 — 초성/중성/종성 조합, 겹받침(ㄳ ㄵ ㄺ ㄼ …), 복합 모음(ㅘ ㅙ ㅢ …)
+- **받침 자동 이동** — 받침 뒤에 모음이 오면 다음 글자의 초성으로 이동 (예: `안`+`ㅏ` → `아나`)
+- **겹받침 분리 이동** — 예: `닭`+`ㅏ` → `달가`
+- **영문 QWERTY** — Shift 로 대문자, 한 글자 입력 후 자동 해제
+- **한/영 전환** 및 **숫자·기호 자판**
+- **백스페이스** — 조합 중에는 자모 단위로, 아니면 글자 삭제
+- 숫자/전화 입력칸에서는 자동으로 기호 자판으로 시작
 
-1. APK를 설치합니다 (직접 빌드하려면 아래 [빌드](#빌드) 참고).
-2. **한글 키보드** 앱 실행 → **키보드 켜기** → 목록에서 켜기
-3. **키보드 선택** → 이 키보드로 전환
+### 폴드/대화면
 
-## 사용법
+- **접힘·펼침 프로파일** — smallestScreenWidthDp 600 기준으로 커버/메인 화면을
+  구분해 분할 간격·키 높이·상단 보조줄 범위를 각각 저장. 접거나 펼치면 즉시 전환.
+- **분할 키보드** — 좌/우 키 블록 사이 가운데 공간이 실제 레이아웃 구성원.
+  기본으로 **커서 패드**(esc/방향키/home/end/pgup/pgdn/선택)가 표시되고
+  📋 키로 **클립보드 패널**과 전환.
+- **선택 모드** — 커서 패드의 ‘선택’을 켜면 이동 키에 Shift 가 실려
+  원격 데스크탑/터미널에서도 텍스트 선택이 된다.
 
-### 자판
+### 원격 데스크탑 / 터미널
 
-| 줄 | 키 |
-|---|---|
-| 맨 위 | `tab` `alt` `del` `home` `end` `📋` `pgup` `pgdn` `+` `-` `=` |
-| 특수문자 | `` ~ ` \| / \ { } [ ] _ `` |
-| 숫자 | `1`~`0` (Shift를 누르면 `!@#…`) |
-| 맨 아래 | `ctrl` `?123` `한/A` `◀` `space` `▲` `▼` `?` `,` `space` `▶` `.` `↵` |
+- **스티키 Ctrl/Alt** — 다음 키를 조합(META)으로 전송, 한글 자판에서도 자모→QWERTY 매핑
+- **스페이스 슬라이드** — 스페이스를 누른 채 좌우로 끌면 즉시 커서 이동(지연 없음),
+  탭이면 일반 공백. 선택 모드와 조합하면 끌어서 선택.
+- **클립보드 히스토리** — 최근 20개 + 길게 눌러 고정(📌), 재부팅 후에도 유지
+- **핀 모드** — 하드웨어 키보드 연결·뒤로 키에도 키보드 유지
 
-- **Shift**: 한 번 누르면 한 글자만, 두 번 누르면 고정
-- **방향키·⌫**: 꾹 누르면 반복
-- **Shift + ↵**: 전송하지 않고 줄바꿈
+## 구조
 
-### Ctrl / Alt
+```
+app/src/main/
+├── AndroidManifest.xml                IME 서비스 + 런처 액티비티 등록
+├── res/xml/method.xml                 입력기 메타데이터(한국어/English 서브타입)
+└── java/com/example/hangulkeyboard/
+    ├── ImeService.kt                  InputMethodService — Compose 를 IME 윈도우에 호스팅
+    ├── MainActivity.kt                키보드 활성화 안내 런처 화면
+    ├── hangul/HangulComposer.kt       두벌식 한글 오토마타(자모 조합 상태머신)
+    └── ui/
+        ├── KeyboardLayouts.kt         한글/영문/기호 자판 레이아웃 정의
+        └── KeyboardView.kt            Compose 키보드 UI
+```
 
-<img src="docs/screenshots/ctrl.png" width="320">
+### IME 안에서 Compose 를 띄우는 방법
 
-`ctrl`을 누르면 초록색으로 켜지고, 다음에 누르는 키 하나와 함께 입력됩니다 (`ctrl` → `c` = Ctrl+C).
-한글 자판에서도 같은 자리의 영문 키로 동작합니다.
-
-### 기호·숫자패드 (`?123`)
-
-<img src="docs/screenshots/symbols.png" width="320">
-
-오른쪽 4열이 계산기식 숫자패드입니다.
-
-### 분할 키보드 · 클립보드
-
-<img src="docs/screenshots/split-clipboard.png" width="560">
-
-- 앱의 **분할 간격** 슬라이더로 가운데를 벌립니다 (0 = 분할 안 함).
-- `📋`를 누르면 복사한 기록이 나오고, 누르면 붙여넣어집니다. 분할하지 않았을 때는 키보드 위에 한 줄로 나옵니다.
-
-### 원격 데스크탑
-
-- ⌫, del, 방향키, home/end는 실제 키 입력으로 보내서 원격 PC에서도 동작합니다.
-- **한/A를 길게 누르면** 원격 PC의 한/영이 전환됩니다.
-
-### 설정 화면
-
-<img src="docs/screenshots/settings.png" width="240">
-
-## 개인정보
-
-인터넷 권한이 없어서 입력한 내용이 밖으로 나가지 않습니다. 클립보드 기록은 메모리에만 있고 키보드가 꺼지면 사라집니다.
+IME 윈도우는 일반 `Activity` 가 아니라서 Compose 가 요구하는 오너가 없습니다.
+그래서 `ImeService` 가 `LifecycleOwner`, `ViewModelStoreOwner`,
+`SavedStateRegistryOwner` 를 직접 구현하고, `onCreateInputView()` 에서 만든
+`ComposeView` 에 `setViewTree*Owner` 로 연결합니다.
 
 ## 빌드
 
+Android Studio(Giraffe 이상)로 `android-keyboard/` 폴더를 열거나 CLI 로 빌드합니다.
+
 ```bash
-gradle wrapper --gradle-version 8.9   # 처음 한 번
-./gradlew assembleDebug               # app/build/outputs/apk/debug/app-debug.apk
+cd android-keyboard
+# Gradle Wrapper jar 이 없다면 한 번 생성
+gradle wrapper --gradle-version 8.9
+./gradlew assembleDebug
 ```
 
-JDK 17, Android SDK 34가 필요합니다. Android Studio로 열어도 됩니다.
+> 저장소에는 `gradle-wrapper.jar` 바이너리를 포함하지 않았습니다.
+> Android Studio 로 열면 자동 생성되며, CLI 라면 위 `gradle wrapper` 로 만듭니다.
 
-## 라이선스
+## 사용 (기기/에뮬레이터)
 
-[MIT](LICENSE)
+1. 앱 설치 후 **한글 키보드** 런처 아이콘 실행
+2. **키보드 켜기** → 시스템 설정에서 이 입력기 활성화
+3. **키보드 선택** → 입력기를 이 키보드로 전환
+4. 아무 입력칸에서 한/영을 입력
+
+## 한글 오토마타 검증
+
+조합 로직은 다음 케이스로 검증했습니다(모두 통과):
+
+| 입력(자모) | 결과 |
+|---|---|
+| ㅇㅏㄴㄴㅕㅇㅎㅏㅅㅔㅇㅛ | 안녕하세요 |
+| ㄷㅏㄹㄱ | 닭 |
+| ㄱㅏㅂㅅ | 값 |
+| ㅇㅗㅐ | 왜 |
+| ㅇㅡㅣ | 의 |
+| ㅇㅏㄴㅏ | 아나 (받침 이동) |
+| ㄷㅏㄹㄱㅏ | 달가 (겹받침 분리) |
+| ㄲㅗㅊ | 꽃 |

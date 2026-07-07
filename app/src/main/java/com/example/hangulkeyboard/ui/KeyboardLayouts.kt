@@ -29,29 +29,41 @@ enum class KeyboardMode { KOREAN, ENGLISH, SYMBOLS }
 /** 시프트 3단계: 해제 / 단일입력(한 글자 후 해제) / 지속(고정). */
 enum class ShiftState { OFF, SINGLE, LOCKED }
 
+/**
+ * 상단 보조줄(터미널/특수문자/숫자) 표시 범위.
+ * 접었을 때(커버 화면)는 세로 공간이 좁아 줄을 줄이고 글자키를 키우는 용도.
+ */
+enum class AuxRows { ALL, TERMINAL_NUMBER, TERMINAL, NONE }
+
 object KeyboardLayouts {
 
-    // 영문 QWERTY (소문자) — 맨 위부터 심볼줄 / 특수문자줄 / 숫자줄
-    val ENGLISH: List<List<Key>> = listOf(
-        terminalRow(),
-        progRow(),
-        numberRow(),
+    // 글자 자판 본체(글자 3줄 + 액션줄). 보조줄은 auxRowsFor 로 앞에 붙는다.
+    private val ENGLISH_MAIN: List<List<Key>> = listOf(
         row("q w e r t y u i o p"),
         indentedRow("a s d f g h j k l"),
         bottomLetterRow("z x c v b n m"),
         actionRow()
     )
 
-    // 한글 두벌식 — 맨 위부터 심볼줄 / 특수문자줄 / 숫자줄
-    val KOREAN: List<List<Key>> = listOf(
-        terminalRow(),
-        progRow(),
-        numberRow(),
+    private val KOREAN_MAIN: List<List<Key>> = listOf(
         row("ㅂ ㅈ ㄷ ㄱ ㅅ ㅛ ㅕ ㅑ ㅐ ㅔ"),
         indentedRow("ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ"),
         bottomLetterRow("ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ"),
         actionRow()
     )
+
+    /** 영문 QWERTY — 프로파일이 고른 보조줄 + 글자 자판. */
+    fun english(aux: AuxRows): List<List<Key>> = auxRowsFor(aux) + ENGLISH_MAIN
+
+    /** 한글 두벌식 — 프로파일이 고른 보조줄 + 글자 자판. */
+    fun korean(aux: AuxRows): List<List<Key>> = auxRowsFor(aux) + KOREAN_MAIN
+
+    private fun auxRowsFor(aux: AuxRows): List<List<Key>> = when (aux) {
+        AuxRows.ALL -> listOf(terminalRow(), progRow(), numberRow())
+        AuxRows.TERMINAL_NUMBER -> listOf(terminalRow(), numberRow())
+        AuxRows.TERMINAL -> listOf(terminalRow())
+        AuxRows.NONE -> emptyList()
+    }
 
     // 기호(좌 6열) + 우측 계산기식 numpad(4열: 789/ 456* 123- 0.=+).
     // 맨 아랫줄은 메인과 동일한 actionRow, 백스페이스도 메인과 같은 위치(액션줄 윗줄 우측 끝).

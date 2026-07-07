@@ -2,6 +2,7 @@ package com.example.hangulkeyboard
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
 import android.text.InputType
@@ -27,10 +28,12 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.hangulkeyboard.hangul.HangulComposer
 import com.example.hangulkeyboard.ui.ActionType
+import com.example.hangulkeyboard.ui.AuxRows
 import com.example.hangulkeyboard.ui.Key
 import com.example.hangulkeyboard.ui.KeyboardMode
 import com.example.hangulkeyboard.ui.KeyboardView
 import com.example.hangulkeyboard.ui.ShiftState
+import org.json.JSONArray
 
 /**
  * Jetpack Compose 로 그리는 한/영 입력기(IME).
@@ -69,12 +72,18 @@ class ImeService : InputMethodService(),
     private var altActive by mutableStateOf(false)
     // 분할 키보드 가운데 공백 폭(키 폭 단위). 0 이면 분할 안 함. 앱에서 조절.
     private var splitGap by mutableStateOf(0f)
+    // 접힘/펼침 프로파일별 레이아웃: 상단 보조줄 범위, 키 높이(dp).
+    private var auxRows by mutableStateOf(AuxRows.ALL)
+    private var keyHeight by mutableStateOf(52f)
+    // 선택 모드: 켜져 있는 동안 커서 이동 키에 Shift 를 실어 텍스트를 선택한다.
+    private var selectActive by mutableStateOf(false)
 
-    // 클립보드: 자체 히스토리(최근 항목) + 표시 여부.
+    // 클립보드: 자체 히스토리(최근 항목) + 고정 항목 + 표시 여부.
     private val clipboard by lazy {
         getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
     private val clipHistory = mutableStateListOf<String>()
+    private val pinnedClips = mutableStateListOf<String>()
     private var showClipboard by mutableStateOf(false)
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
@@ -83,6 +92,7 @@ class ImeService : InputMethodService(),
         super.onCreate()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         pinned = prefs.getBoolean(KEY_PINNED, false)
+        loadClips()
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
     }
 
@@ -112,11 +122,17 @@ class ImeService : InputMethodService(),
                     ctrlActive = ctrlActive,
                     altActive = altActive,
                     splitGap = splitGap,
+                    keyHeight = keyHeight,
+                    auxRows = auxRows,
                     clips = clipHistory,
+                    pinnedClips = pinnedClips,
                     showClipboard = showClipboard,
+                    selectActive = selectActive,
                     onKey = ::onKey,
                     onKeyLong = ::onKeyLong,
-                    onPaste = ::onPasteClip
+                    onPaste = ::onPasteClip,
+                    onPinToggle = ::onPinToggle,
+                    onToggleSelect = { selectActive = !selectActive }
                 )
             }
         }
@@ -128,10 +144,30 @@ class ImeService : InputMethodService(),
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         applyPinDisposition()
-        // 앱에서 조절한 분할 공백 폭을 반영(키보드가 뜰 때마다 최신값 반영).
-        splitGap = prefs.getFloat(KEY_SPLIT_GAP, 0f)
+        // 접힘/펼침에 맞는 프로파일 설정을 반영(키보드가 뜰 때마다 최신값 반영).
+        loadProfile()
         // 현재 클립보드 내용을 히스토리에 반영(변경 이벤트가 없어도 최신값 확보).
         captureClip()
+    }
+
+    /**
+     * 접힘(커버)/펼침(메인) 화면에 따라 별도 저장된 레이아웃 설정을 읽는다.
+     * 폴드 커버 화면은 smallestScreenWidthDp 가 600 미만, 메인 화면은 이상이다.
+     */
+    private fun loadProfile() {
+        val folded = resources.configuration.smallestScreenWidthDp < 600
+        val p = if (folded) PROFILE_FOLDED else PROFILE_UNFOLDED
+        splitGap = prefs.getFloat(p + KEY_SPLIT_GAP, if (folded) 0f else 2f)
+        keyHeight = prefs.getFloat(p + KEY_KEY_HEIGHT, if (folded) 56f else 52f)
+        auxRows = runCatching {
+            AuxRows.valueOf(prefs.getString(p + KEY_AUX_ROWS, null) ?: "")
+        }.getOrDefault(if (folded) AuxRows.TERMINAL else AuxRows.ALL)
+    }
+
+    /** 키보드가 떠 있는 채로 접거나 펼치면 즉시 해당 프로파일로 전환. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        loadProfile()
     }
 
     /**
@@ -164,10 +200,13 @@ class ImeService : InputMethodService(),
         super.onStartInput(attribute, restarting)
         composer.flush()
         shiftState = ShiftState.OFF
+        selectActive = false
         // 숫자/전화 입력칸이면 기호 자판으로 시작
         attribute?.let {
             val cls = it.inputType and InputType.TYPE_MASK_CLASS
             if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE) {
+                // ?123 토글로 돌아갈 자판을 기억해 둔다(이전 previousMode 오염 방지).
+                if (mode != KeyboardMode.SYMBOLS) previousMode = mode
                 mode = KeyboardMode.SYMBOLS
             }
         }
@@ -191,12 +230,43 @@ class ImeService : InputMethodService(),
             val text = clipboard.primaryClip
                 ?.takeIf { it.itemCount > 0 }
                 ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
-            if (!text.isNullOrEmpty()) {
+            if (!text.isNullOrEmpty() && text !in pinnedClips) {
                 clipHistory.remove(text)
                 clipHistory.add(0, text)
                 while (clipHistory.size > 20) clipHistory.removeAt(clipHistory.size - 1)
+                persistClips()
             }
         }
+    }
+
+    /** 클립 항목 고정/해제. 고정 항목은 히스토리 만료와 무관하게 유지된다. */
+    private fun onPinToggle(text: String) {
+        if (pinnedClips.remove(text)) {
+            clipHistory.remove(text)
+            clipHistory.add(0, text)
+        } else {
+            pinnedClips.add(0, text)
+            clipHistory.remove(text)
+        }
+        persistClips()
+    }
+
+    /** 히스토리/고정 항목을 저장해 프로세스가 죽어도 유지한다. */
+    private fun persistClips() {
+        prefs.edit()
+            .putString(KEY_CLIP_PINNED, JSONArray(pinnedClips.toList()).toString())
+            .putString(KEY_CLIP_HISTORY, JSONArray(clipHistory.toList()).toString())
+            .apply()
+    }
+
+    private fun loadClips() {
+        fun read(key: String): List<String> = runCatching {
+            val raw = prefs.getString(key, null) ?: return@runCatching emptyList()
+            val arr = JSONArray(raw)
+            List(arr.length()) { arr.getString(it) }
+        }.getOrDefault(emptyList())
+        pinnedClips.addAll(read(KEY_CLIP_PINNED))
+        clipHistory.addAll(read(KEY_CLIP_HISTORY))
     }
 
     // ---- 입력 처리 ----
@@ -241,6 +311,8 @@ class ImeService : InputMethodService(),
         }
         // 단일입력 시프트는 한 글자 입력 후 자동 해제(지속 모드는 유지).
         if (shiftState == ShiftState.SINGLE) shiftState = ShiftState.OFF
+        // 글자를 입력하면 선택은 대치되므로 선택 모드도 해제.
+        selectActive = false
     }
 
     private fun onActionKey(type: ActionType) {
@@ -271,10 +343,12 @@ class ImeService : InputMethodService(),
             ActionType.SPACE -> {
                 commitComposing()
                 ic.commitText(" ", 1)
+                selectActive = false
             }
 
             ActionType.ENTER -> {
                 commitComposing()
+                selectActive = false
                 if (shifted) {
                     // 데스크탑처럼 Shift+Enter 는 (전송하지 않고) 줄바꿈만.
                     ic.commitText("\n", 1)
@@ -356,11 +430,16 @@ class ImeService : InputMethodService(),
         if (shiftState == ShiftState.SINGLE) shiftState = ShiftState.OFF
     }
 
-    /** 현재 켜진 Ctrl/Alt 조합의 meta 비트. */
+    /** 현재 켜진 Ctrl/Alt(+선택/시프트) 조합의 meta 비트. */
     private fun activeMeta(): Int {
         var m = 0
         if (ctrlActive) m = m or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         if (altActive) m = m or KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
+        // 선택 모드 또는 시프트 중엔 Shift 를 실어 보낸다(Shift+방향키 = 선택,
+        // Ctrl+Shift+C = 터미널 복사 등).
+        if (selectActive || shiftState != ShiftState.OFF) {
+            m = m or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
+        }
         return m
     }
 
@@ -430,7 +509,14 @@ class ImeService : InputMethodService(),
 
     private companion object {
         const val KEY_PINNED = "pinned"
+        // 프로파일 접두어 + 항목 키. MainActivity 설정 화면과 키를 공유한다.
+        const val PROFILE_FOLDED = "folded_"
+        const val PROFILE_UNFOLDED = "unfolded_"
         const val KEY_SPLIT_GAP = "split_gap"
+        const val KEY_KEY_HEIGHT = "key_height"
+        const val KEY_AUX_ROWS = "aux_rows"
+        const val KEY_CLIP_HISTORY = "clip_history"
+        const val KEY_CLIP_PINNED = "clip_pinned"
 
         // 두벌식 자모 → 같은 물리 위치의 QWERTY 소문자.
         val JAMO_QWERTY = mapOf(
