@@ -8,8 +8,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -21,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,8 +45,9 @@ import kotlinx.coroutines.launch
  * 키보드 전체 뷰. 상태(mode/shift)는 호출자가 소유하고,
  * 키 입력은 [onKey] 콜백으로 전달한다.
  *
- * 분할([splitGap] > 0)이면 좌/우 반쪽 키 블록 사이의 가운데 공간이
- * 레이아웃의 실제 구성원이 되고, 그 안에 클립보드/커서 패드를 배치한다.
+ * 분할([splitGap] > 0)이면 각 줄 가운데에 공백을 끼우되(키 폭·배치는 원래
+ * 그대로), 그 빈 칸 안에 줄별로 내용을 채운다 — 클립보드 모드면 클립 항목,
+ * 아니면 커서/기능 미니 키. 별도 패널이나 오버레이를 띄우지 않는다.
  */
 @Composable
 fun KeyboardView(
@@ -75,6 +73,9 @@ fun KeyboardView(
     // 한/영 자판에서만 상단 보조줄(터미널/특수문자/숫자)을 낮게 둔다.
     val compactCount = if (mode == KeyboardMode.KOREAN || mode == KeyboardMode.ENGLISH)
         (rows.size - 4).coerceAtLeast(0) else 0
+    // 고정 항목이 앞, 이후 최근 히스토리. 분할 슬롯/스트립이 함께 쓴다.
+    val clipItems = pinnedClips.map { it to true } +
+        clips.filter { it !in pinnedClips }.map { it to false }
 
     Surface(color = Color(0xFFECEFF1)) {
         Column(
@@ -82,85 +83,45 @@ fun KeyboardView(
                 .fillMaxWidth()
                 .padding(horizontal = 1.dp, vertical = 4.dp)
         ) {
-            if (splitGap > 0f) {
-                SplitLayout(
-                    rows, compactCount, splitGap, keyHeight,
-                    shiftState, ctrlActive, altActive, showClipboard, selectActive,
-                    clips, pinnedClips, onKey, onKeyLong, onPaste, onPinToggle, onToggleSelect
-                )
-            } else {
-                if (showClipboard) ClipboardStrip(clips, pinnedClips, onPaste, onPinToggle)
-                rows.forEachIndexed { index, keys ->
-                    KeyRow(
-                        keys, index < compactCount, keyHeight,
-                        shiftState, ctrlActive, altActive, showClipboard, onKey, onKeyLong
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 분할 레이아웃: [좌측 키 블록 | 중앙 패널 | 우측 키 블록] 3컬럼.
- * 각 줄은 weight 누적 합의 절반 지점에서 나뉘므로 키의 상대 폭은 그대로 유지되고,
- * 중앙 패널은 오버레이가 아니라 실제 배치라 키를 가리거나 터치를 뺏지 않는다.
- */
-@Composable
-private fun SplitLayout(
-    rows: List<List<Key>>,
-    compactCount: Int,
-    splitGap: Float,
-    keyHeight: Float,
-    shiftState: ShiftState,
-    ctrlActive: Boolean,
-    altActive: Boolean,
-    showClipboard: Boolean,
-    selectActive: Boolean,
-    clips: List<String>,
-    pinnedClips: List<String>,
-    onKey: (Key) -> Unit,
-    onKeyLong: (Key) -> Unit,
-    onPaste: (String) -> Unit,
-    onPinToggle: (String) -> Unit,
-    onToggleSelect: () -> Unit,
-) {
-    val halves = remember(rows) { rows.map { splitByWeight(it) } }
-    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        Column(modifier = Modifier.weight(HALF_ROW_WEIGHT)) {
-            halves.forEachIndexed { index, half ->
+            // 분할이 아닐 때만 클립보드를 상단 가로 스트립으로.
+            if (showClipboard && splitGap <= 0f) ClipboardStrip(clipItems, onPaste, onPinToggle)
+            rows.forEachIndexed { index, keys ->
+                val compact = index < compactCount
+                // 분할: 줄 가운데(weight 절반 지점)에 공백을 끼운다. 키 폭은 그대로.
+                val rowKeys = if (splitGap > 0f) splitWithGap(keys, splitGap) else keys
                 KeyRow(
-                    half.first, index < compactCount, keyHeight,
-                    shiftState, ctrlActive, altActive, showClipboard, onKey, onKeyLong
-                )
-            }
-        }
-        Box(
-            modifier = Modifier
-                .weight(splitGap.coerceAtLeast(0.5f))
-                .fillMaxHeight()
-                .padding(horizontal = 3.dp, vertical = 2.dp)
-        ) {
-            if (showClipboard) ClipboardPanel(clips, pinnedClips, onPaste, onPinToggle)
-            else CursorPad(selectActive, onKey, onToggleSelect)
-        }
-        Column(modifier = Modifier.weight(HALF_ROW_WEIGHT)) {
-            halves.forEachIndexed { index, half ->
-                KeyRow(
-                    half.second, index < compactCount, keyHeight,
-                    shiftState, ctrlActive, altActive, showClipboard, onKey, onKeyLong
+                    keys = rowKeys,
+                    compact = compact,
+                    keyHeight = keyHeight,
+                    shiftState = shiftState,
+                    ctrlActive = ctrlActive,
+                    altActive = altActive,
+                    showClipboard = showClipboard,
+                    onKey = onKey,
+                    onKeyLong = onKeyLong,
+                    gapContent = if (splitGap > 0f) {
+                        {
+                            CenterSlot(
+                                rowFromBottom = rows.size - 1 - index,
+                                rowFromTop = index,
+                                showClipboard = showClipboard,
+                                selectActive = selectActive,
+                                clipItems = clipItems,
+                                onKey = onKey,
+                                onPaste = onPaste,
+                                onPinToggle = onPinToggle,
+                                onToggleSelect = onToggleSelect
+                            )
+                        }
+                    } else null
                 )
             }
         }
     }
 }
 
-// 분할 시 좌/우 키 블록 각각의 weight. 대략 한 줄 weight(~11)의 절반이라
-// splitGap 의 의미(키 폭 단위 공백)가 기존과 같게 유지된다.
-private const val HALF_ROW_WEIGHT = 5.5f
-
-/** 줄을 weight 누적 합이 절반에 가장 가까운 지점에서 좌/우로 나눈다. */
-private fun splitByWeight(keys: List<Key>): Pair<List<Key>, List<Key>> {
+/** 줄을 weight 누적 합이 절반에 가장 가까운 지점에서 나눠 [gap] 공백을 끼운다. */
+private fun splitWithGap(keys: List<Key>, gap: Float): List<Key> {
     val total = keys.sumOf { keyWeight(it).toDouble() }
     var best = 1
     var bestDiff = Double.MAX_VALUE
@@ -173,7 +134,7 @@ private fun splitByWeight(keys: List<Key>): Pair<List<Key>, List<Key>> {
             best = i + 1
         }
     }
-    return keys.subList(0, best) to keys.subList(best, keys.size)
+    return keys.subList(0, best) + Key.Gap(gap) + keys.subList(best, keys.size)
 }
 
 @Composable
@@ -187,11 +148,20 @@ private fun KeyRow(
     showClipboard: Boolean,
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
+    gapContent: (@Composable () -> Unit)? = null,
 ) {
+    val cellHeight = if (compact) (keyHeight * 0.77f).dp else keyHeight.dp
     Row(modifier = Modifier.fillMaxWidth()) {
         keys.forEach { key ->
             if (key is Key.Gap) {
-                Spacer(Modifier.weight(key.weight))
+                if (gapContent != null) {
+                    // 빈 칸도 그 줄의 키와 같은 높이의 셀 — 내용이 줄에 맞춰 박힌다.
+                    Box(modifier = Modifier.weight(key.weight).height(cellHeight)) {
+                        gapContent()
+                    }
+                } else {
+                    Spacer(Modifier.weight(key.weight))
+                }
             } else {
                 KeyButton(
                     key = key,
@@ -211,109 +181,104 @@ private fun KeyRow(
 }
 
 /**
- * 분할 중앙 커서 패드. 원격 데스크탑/터미널에서 커서 이동·선택을
- * 화면 가운데(양손 엄지 사이)에서 처리한다. 📋 키로 클립보드와 전환.
+ * 분할 시 각 줄 가운데 빈 칸의 내용.
+ * 클립보드 모드: 위에서부터 줄당 클립 항목 하나(탭 = 붙여넣기, 길게 = 고정).
+ * 커서 모드: 아래줄부터 선택 / ◀▶ / ▲▼ / esc / home·end / pgup·pgdn.
  */
 @Composable
-private fun CursorPad(
+private fun CenterSlot(
+    rowFromBottom: Int,
+    rowFromTop: Int,
+    showClipboard: Boolean,
     selectActive: Boolean,
+    clipItems: List<Pair<String, Boolean>>,
     onKey: (Key) -> Unit,
+    onPaste: (String) -> Unit,
+    onPinToggle: (String) -> Unit,
     onToggleSelect: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        PadRow {
-            PadKey("esc") { onKey(Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)) }
-            PadKey("▲") { onKey(Key.Action(ActionType.UP, "▲")) }
-            // 선택 모드: 켜져 있는 동안 이동 키에 Shift 가 실려 텍스트가 선택된다.
-            PadKey("선택", active = selectActive) { onToggleSelect() }
+    if (showClipboard) {
+        val item = clipItems.getOrNull(rowFromTop)
+        when {
+            item != null -> ClipItem(
+                text = item.first,
+                pinned = item.second,
+                maxLines = 2,
+                fontSize = 11,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 2.dp, vertical = 2.5.dp),
+                onPaste = onPaste,
+                onPinToggle = onPinToggle
+            )
+            clipItems.isEmpty() && rowFromTop == 0 -> Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Text("클립보드 비어 있음", fontSize = 10.sp, color = Color(0xFF607D8B))
+            }
         }
-        PadRow {
-            PadKey("◀") { onKey(Key.Action(ActionType.LEFT, "◀")) }
-            PadKey("▼") { onKey(Key.Action(ActionType.DOWN, "▼")) }
-            PadKey("▶") { onKey(Key.Action(ActionType.RIGHT, "▶")) }
-        }
-        PadRow {
-            PadKey("home") { onKey(Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME)) }
-            PadKey("end") { onKey(Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END)) }
-        }
-        PadRow {
-            PadKey("pgup") { onKey(Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP)) }
-            PadKey("pgdn") { onKey(Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN)) }
+        return
+    }
+    Row(modifier = Modifier.fillMaxSize()) {
+        when (rowFromBottom) {
+            0 -> MiniKey("선택", active = selectActive) { onToggleSelect() }
+            1 -> {
+                MiniKey("◀") { onKey(Key.Action(ActionType.LEFT, "◀")) }
+                MiniKey("▶") { onKey(Key.Action(ActionType.RIGHT, "▶")) }
+            }
+            2 -> {
+                MiniKey("▲") { onKey(Key.Action(ActionType.UP, "▲")) }
+                MiniKey("▼") { onKey(Key.Action(ActionType.DOWN, "▼")) }
+            }
+            3 -> MiniKey("esc") { onKey(Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)) }
+            4 -> {
+                MiniKey("home") { onKey(Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME)) }
+                MiniKey("end") { onKey(Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END)) }
+            }
+            5 -> {
+                MiniKey("pgup") { onKey(Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP)) }
+                MiniKey("pgdn") { onKey(Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN)) }
+            }
         }
     }
 }
 
+/** 빈 칸 안에 들어가는 미니 키. 일반 키와 같은 인셋/모양으로 줄에 맞춘다. */
 @Composable
-private fun ColumnScope.PadRow(content: @Composable RowScope.() -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().weight(1f),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        content = content
-    )
-}
-
-@Composable
-private fun RowScope.PadKey(
+private fun RowScope.MiniKey(
     label: String,
     active: Boolean = false,
     onClick: () -> Unit,
 ) {
     val view = LocalView.current
-    Surface(
-        color = if (active) Color(0xFF4CAF50) else Color.White,
-        shape = RoundedCornerShape(6.dp),
-        shadowElevation = 1.dp,
+    Box(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
             .clickable {
                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            color = if (active) Color(0xFF4CAF50) else Color(0xFFCFD8DC),
+            shape = RoundedCornerShape(7.dp),
+            shadowElevation = 1.dp,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 2.dp, vertical = 2.5.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Text(
+                    label,
+                    fontSize = 12.sp,
+                    color = Color(0xFF1A1A1A),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
             }
-    ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            Text(label, fontSize = 13.sp, color = Color(0xFF1A1A1A), textAlign = TextAlign.Center)
-        }
-    }
-}
-
-/** 분할 중앙: 클립보드 히스토리 세로 리스트. 탭 = 붙여넣기, 길게 = 고정/해제. */
-@Composable
-private fun ClipboardPanel(
-    clips: List<String>,
-    pinnedClips: List<String>,
-    onPaste: (String) -> Unit,
-    onPinToggle: (String) -> Unit,
-) {
-    // clips/pinnedClips 는 SnapshotStateList 라 remember 키로 쓰면 내용 변경이
-    // 반영되지 않는다. 매 컴포지션마다 직접 계산해 스냅샷 읽기를 추적시킨다.
-    val items = pinnedClips.map { it to true } +
-        clips.filter { it !in pinnedClips }.map { it to false }
-    if (items.isEmpty()) {
-        Text(
-            "클립보드\n비어 있음",
-            fontSize = 11.sp,
-            color = Color(0xFF607D8B),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-        return
-    }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        items.forEach { (text, pinned) ->
-            ClipItem(
-                text, pinned,
-                maxLines = 2,
-                modifier = Modifier.fillMaxWidth(),
-                onPaste = onPaste,
-                onPinToggle = onPinToggle
-            )
         }
     }
 }
@@ -321,14 +286,11 @@ private fun ClipboardPanel(
 /** 분할이 아닐 때 상단 가로 클립보드 스트립. 고정 항목이 앞에 온다. */
 @Composable
 private fun ClipboardStrip(
-    clips: List<String>,
-    pinnedClips: List<String>,
+    clipItems: List<Pair<String, Boolean>>,
     onPaste: (String) -> Unit,
     onPinToggle: (String) -> Unit,
 ) {
-    val items = pinnedClips.map { it to true } +
-        clips.filter { it !in pinnedClips }.map { it to false }
-    if (items.isEmpty()) return
+    if (clipItems.isEmpty()) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,10 +298,12 @@ private fun ClipboardStrip(
             .padding(bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        items.forEach { (text, pinned) ->
+        clipItems.forEach { (text, pinned) ->
             ClipItem(
-                text, pinned,
+                text = text,
+                pinned = pinned,
                 maxLines = 1,
+                fontSize = 12,
                 modifier = Modifier.widthIn(max = 160.dp),
                 onPaste = onPaste,
                 onPinToggle = onPinToggle
@@ -353,6 +317,7 @@ private fun ClipItem(
     text: String,
     pinned: Boolean,
     maxLines: Int,
+    fontSize: Int,
     modifier: Modifier,
     onPaste: (String) -> Unit,
     onPinToggle: (String) -> Unit,
@@ -375,14 +340,16 @@ private fun ClipItem(
             )
         }
     ) {
-        Text(
-            text = if (pinned) "📌 $text" else text,
-            fontSize = 12.sp,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
-            color = Color(0xFF1A1A1A),
-            modifier = Modifier.padding(6.dp)
-        )
+        Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize()) {
+            Text(
+                text = if (pinned) "📌 $text" else text,
+                fontSize = fontSize.sp,
+                maxLines = maxLines,
+                overflow = TextOverflow.Ellipsis,
+                color = Color(0xFF1A1A1A),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+            )
+        }
     }
 }
 
