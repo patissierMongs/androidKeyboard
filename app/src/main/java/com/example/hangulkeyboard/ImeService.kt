@@ -293,6 +293,9 @@ class ImeService : InputMethodService(),
 
     private fun onCharKey(text: String) {
         val ic = currentInputConnection ?: return
+        // 글자 입력은 선택영역을 대치하므로 선택 모드를 먼저 끈다.
+        // (Ctrl 조합도 마찬가지 — 선택 후 Ctrl+C 가 Shift 없이 온전히 나가야 한다.)
+        selectActive = false
         // Ctrl/Alt 조합: 다음 키를 실제 키이벤트로 보낸다. 터미널/원격에서 Ctrl+C 등.
         // 한글 자판이면 자모를 그 자리의 QWERTY 키로 매핑해 조합을 유지한다(ㅂ→Q 등).
         if (ctrlActive || altActive) {
@@ -315,8 +318,6 @@ class ImeService : InputMethodService(),
         }
         // 단일입력 시프트는 한 글자 입력 후 자동 해제(지속 모드는 유지).
         if (shiftState == ShiftState.SINGLE) shiftState = ShiftState.OFF
-        // 글자를 입력하면 선택은 대치되므로 선택 모드도 해제.
-        selectActive = false
     }
 
     private fun onActionKey(type: ActionType) {
@@ -333,6 +334,8 @@ class ImeService : InputMethodService(),
                 if (composer.backspace()) {
                     ic.setComposingText(composer.composing, 1)
                 } else {
+                    // 선택 중이면 선택 모드를 끄고 플레인 백스페이스 → 선택영역 삭제.
+                    selectActive = false
                     // 원격 데스크탑에서도 먹도록 실제 백스페이스 키 이벤트를 보낸다.
                     // (Ctrl+Backspace 는 단어 삭제)
                     sendKeyWithMeta(ic, KeyEvent.KEYCODE_DEL, activeMeta())
@@ -408,6 +411,7 @@ class ImeService : InputMethodService(),
 
     private fun commitText(text: String) {
         val ic = currentInputConnection ?: return
+        selectActive = false
         commitComposing()
         ic.commitText(text, 1)
     }
@@ -415,6 +419,7 @@ class ImeService : InputMethodService(),
     /** 클립보드 리스트에서 항목을 눌러 붙여넣기. 패널은 켜진 채 유지(연속 붙여넣기). */
     private fun onPasteClip(text: String) {
         val ic = currentInputConnection ?: return
+        selectActive = false
         commitComposing()
         ic.commitText(text, 1)
     }
@@ -431,7 +436,7 @@ class ImeService : InputMethodService(),
     /** 조합 중인 글자를 확정하고 방향키(DPAD)로 커서를 옮긴다. Ctrl 조합이면 단어 이동 등. */
     private fun moveCursor(ic: android.view.inputmethod.InputConnection, keyCode: Int) {
         commitComposing()
-        sendKeyWithMeta(ic, keyCode, activeMeta())
+        sendKeyWithMeta(ic, keyCode, activeMeta() or selectionMeta())
         clearMods()
     }
 
@@ -439,23 +444,29 @@ class ImeService : InputMethodService(),
     private fun onKeyCodeKey(code: Int) {
         val ic = currentInputConnection ?: return
         commitComposing()
-        sendKeyWithMeta(ic, code, activeMeta())
+        // 이동 키에만 선택(Shift)을 싣는다. 그 외(tab/del/esc 등)는 선택 모드를
+        // 끄고 평범하게 처리 — del 은 선택영역 삭제, esc 는 선택 취소가 된다.
+        val movement = code in MOVEMENT_CODES
+        if (!movement) selectActive = false
+        sendKeyWithMeta(ic, code, activeMeta() or (if (movement) selectionMeta() else 0))
         clearMods()
         if (shiftState == ShiftState.SINGLE) shiftState = ShiftState.OFF
     }
 
-    /** 현재 켜진 Ctrl/Alt(+선택/시프트) 조합의 meta 비트. */
+    /** 현재 켜진 Ctrl/Alt(+시프트) 조합의 meta 비트. */
     private fun activeMeta(): Int {
         var m = 0
         if (ctrlActive) m = m or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         if (altActive) m = m or KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
-        // 선택 모드 또는 시프트 중엔 Shift 를 실어 보낸다(Shift+방향키 = 선택,
-        // Ctrl+Shift+C = 터미널 복사 등).
-        if (selectActive || shiftState != ShiftState.OFF) {
+        if (shiftState != ShiftState.OFF) {
             m = m or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
         }
         return m
     }
+
+    /** 선택 모드의 Shift 비트 — 커서 이동 키에만 싣는다(Shift+방향키 = 선택). */
+    private fun selectionMeta(): Int =
+        if (selectActive) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
 
     private fun clearMods() {
         ctrlActive = false
@@ -531,6 +542,12 @@ class ImeService : InputMethodService(),
         const val KEY_AUX_ROWS = "aux_rows"
         const val KEY_CLIP_HISTORY = "clip_history"
         const val KEY_CLIP_PINNED = "clip_pinned"
+
+        // 선택(Shift)을 실을 수 있는 커서 이동 키. 그 외 키는 선택 모드를 해제한다.
+        val MOVEMENT_CODES = setOf(
+            KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.KEYCODE_MOVE_END,
+            KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN
+        )
 
         // 두벌식 자모 → 같은 물리 위치의 QWERTY 소문자.
         val JAMO_QWERTY = mapOf(

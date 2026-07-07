@@ -169,9 +169,10 @@ object KeyboardLayouts {
         if (bottomArrows) Key.Action(ActionType.UP, "▲") else Key.Char("("),
         if (bottomArrows) Key.Action(ActionType.DOWN, "▼") else Key.Char(")"),
         Key.Char("?"),
-        Key.Action(ActionType.COMMA, ","),
+        // 분할이면 , 를 오른쪽 . 옆으로 보내고 이 자리는 / 가 차지한다.
+        if (bottomArrows) Key.Action(ActionType.COMMA, ",") else Key.Char("/"),
         Key.Action(ActionType.SPACE, ""),
-        if (bottomArrows) Key.Action(ActionType.RIGHT, "▶") else Key.Char("/"),
+        if (bottomArrows) Key.Action(ActionType.RIGHT, "▶") else Key.Action(ActionType.COMMA, ","),
         Key.Action(ActionType.PERIOD, "."),
         Key.Action(ActionType.ENTER, "↵")
     )
