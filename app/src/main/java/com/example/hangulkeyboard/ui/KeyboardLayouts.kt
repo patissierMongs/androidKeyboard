@@ -69,16 +69,36 @@ object KeyboardLayouts {
         AuxRows.NONE -> emptyList()
     }
 
-    // 기호(좌 6열) + 우측 계산기식 numpad(4열: 789/ 456* 123- 0.=+).
-    // 맨 아랫줄은 메인과 동일한 actionRow, 백스페이스도 메인과 같은 위치(액션줄 윗줄 우측 끝).
-    fun symbols(bottomArrows: Boolean): List<List<Key>> = listOf(
-        charKeys("~ ` ! @ # $") + charKeys("7 8 9 /"),
-        charKeys("% ^ & * ( )") + charKeys("4 5 6 *"),
-        charKeys("- _ = + [ ]") + charKeys("1 2 3 -"),
-        charKeys("{ } \\ | : ;") + charKeys("0 . = +"),
-        charKeys("\" ' < > , . ?") + Key.Action(ActionType.BACKSPACE, "⌫"),
+    // 기호 자판 — 글자 자판과 완전히 같은 골격(10키 / 9키 / 7키+⇧⌫ / 액션줄).
+    // 전환해도 줄 수·키 위치·가운데 칸이 그대로라 손 위치가 안 흔들린다.
+    // 2번째 줄은 US 자판의 기호 키 배열, Shift 로 짝 기호(~ _ + { } : " | ?)와
+    // 숫자줄 특수문자(! @ # …)가 나온다. 3번째 줄은 자주 쓰는 Shift 짝 직통.
+    private fun symbolsMain(bottomArrows: Boolean): List<List<Key>> = listOf(
+        row("1 2 3 4 5 6 7 8 9 0"),
+        indentedRow("` - = [ ] ; ' \\ /"),
+        bottomLetterRow("_ : \" < > * |"),
         actionRow(bottomArrows)
     )
+
+    fun symbols(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
+        auxRowsFor(aux) + symbolsMain(bottomArrows)
+
+    // US 자판 기호 쌍(Shift). 숫자는 NUMBER_SHIFT 로 처리한다.
+    private val SYMBOL_SHIFT = mapOf(
+        "`" to "~", "-" to "_", "=" to "+", "[" to "{", "]" to "}",
+        ";" to ":", "'" to "\"", "\\" to "|", "/" to "?"
+    )
+
+    /** 기호 자판 시프트: 숫자 → 특수문자, US 기호 쌍 치환. */
+    fun shiftSymbols(rows: List<List<Key>>): List<List<Key>> =
+        rows.map { line ->
+            line.map { key ->
+                if (key is Key.Char)
+                    (NUMBER_SHIFT[key.label] ?: SYMBOL_SHIFT[key.label])
+                        ?.let { Key.Char(it) } ?: key
+                else key
+            }
+        }
 
     /** 영문 대문자 변환 + 시프트한 숫자 → 특수문자. */
     fun shiftEnglish(rows: List<List<Key>>): List<List<Key>> =
@@ -117,7 +137,14 @@ object KeyboardLayouts {
             }
         }
 
-    private fun row(spaceSeparated: String): List<Key> = charKeys(spaceSeparated)
+    // 10칸짜리 윗줄. 양 끝 키(ㅂ/ㅔ, q/p, 1/0)는 화면 가장자리라 오타가 잦아
+    // 살짝 넓힌다(홈row 의 1.5 보다는 완만하게 1.25).
+    private fun row(spaceSeparated: String): List<Key> {
+        val parts = spaceSeparated.split(" ")
+        return parts.mapIndexed { i, s ->
+            Key.Char(s, weight = if (i == 0 || i == parts.lastIndex) 1.25f else 1f)
+        }
+    }
 
     // 9칸짜리 홈row. 좌우 빈칸 없이 양끝 키(ㅁ/ㅣ, a/l)만 넓혀 폭을 채운다.
     private fun indentedRow(spaceSeparated: String): List<Key> {

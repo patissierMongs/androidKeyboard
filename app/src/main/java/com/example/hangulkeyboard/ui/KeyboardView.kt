@@ -83,9 +83,9 @@ fun KeyboardView(
     val rows = remember(mode, shifted, auxRows, bottomArrows) {
         resolveRows(mode, shifted, auxRows, bottomArrows)
     }
-    // 한/영 자판에서만 상단 보조줄(터미널/특수문자/숫자)을 낮게 둔다.
-    val compactCount = if (mode == KeyboardMode.KOREAN || mode == KeyboardMode.ENGLISH)
-        (rows.size - 4).coerceAtLeast(0) else 0
+    // 상단 보조줄(터미널/특수문자/숫자)은 낮게 둔다. 모든 자판이 보조줄 + 4줄
+    // 골격을 공유하므로 앞쪽 초과분이 곧 보조줄이다.
+    val compactCount = (rows.size - 4).coerceAtLeast(0)
     // 고정 항목이 앞, 이후 최근 히스토리. 분할 슬롯/스트립이 함께 쓴다.
     val clipItems = pinnedClips.map { it to true } +
         clips.filter { it !in pinnedClips }.map { it to false }
@@ -701,13 +701,13 @@ private fun resolveRows(
     val base = when (mode) {
         KeyboardMode.KOREAN -> KeyboardLayouts.korean(aux, bottomArrows)
         KeyboardMode.ENGLISH -> KeyboardLayouts.english(aux, bottomArrows)
-        KeyboardMode.SYMBOLS -> KeyboardLayouts.symbols(bottomArrows)
+        KeyboardMode.SYMBOLS -> KeyboardLayouts.symbols(aux, bottomArrows)
     }
     if (!shifted) return base
     return when (mode) {
         KeyboardMode.KOREAN -> KeyboardLayouts.shiftKorean(base)
         KeyboardMode.ENGLISH -> KeyboardLayouts.shiftEnglish(base)
-        KeyboardMode.SYMBOLS -> base
+        KeyboardMode.SYMBOLS -> KeyboardLayouts.shiftSymbols(base)
     }
 }
 
