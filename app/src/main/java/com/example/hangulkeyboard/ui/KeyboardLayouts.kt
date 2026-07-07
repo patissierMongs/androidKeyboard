@@ -20,7 +20,7 @@ sealed interface Key {
 enum class ActionType {
     SHIFT, BACKSPACE, LANGUAGE, SYMBOLS, SPACE, ENTER, COMMA, PERIOD, PIN,
     LEFT, RIGHT, UP, DOWN,
-    CTRL, ALT, CLIPBOARD
+    CTRL, ALT, CLIPBOARD, SELECT_ALL
 }
 
 /** 자판 모드. */
@@ -38,25 +38,28 @@ enum class AuxRows { ALL, TERMINAL_NUMBER, TERMINAL, NONE }
 object KeyboardLayouts {
 
     // 글자 자판 본체(글자 3줄 + 액션줄). 보조줄은 auxRowsFor 로 앞에 붙는다.
-    private val ENGLISH_MAIN: List<List<Key>> = listOf(
+    // bottomArrows=false(분할 시)면 액션줄 방향키 자리가 ! ( ) / 로 바뀐다.
+    private fun englishMain(bottomArrows: Boolean): List<List<Key>> = listOf(
         row("q w e r t y u i o p"),
         indentedRow("a s d f g h j k l"),
         bottomLetterRow("z x c v b n m"),
-        actionRow()
+        actionRow(bottomArrows)
     )
 
-    private val KOREAN_MAIN: List<List<Key>> = listOf(
+    private fun koreanMain(bottomArrows: Boolean): List<List<Key>> = listOf(
         row("ㅂ ㅈ ㄷ ㄱ ㅅ ㅛ ㅕ ㅑ ㅐ ㅔ"),
         indentedRow("ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ"),
         bottomLetterRow("ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ"),
-        actionRow()
+        actionRow(bottomArrows)
     )
 
     /** 영문 QWERTY — 프로파일이 고른 보조줄 + 글자 자판. */
-    fun english(aux: AuxRows): List<List<Key>> = auxRowsFor(aux) + ENGLISH_MAIN
+    fun english(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
+        auxRowsFor(aux) + englishMain(bottomArrows)
 
     /** 한글 두벌식 — 프로파일이 고른 보조줄 + 글자 자판. */
-    fun korean(aux: AuxRows): List<List<Key>> = auxRowsFor(aux) + KOREAN_MAIN
+    fun korean(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
+        auxRowsFor(aux) + koreanMain(bottomArrows)
 
     private fun auxRowsFor(aux: AuxRows): List<List<Key>> = when (aux) {
         AuxRows.ALL -> listOf(terminalRow(), progRow(), numberRow())
@@ -67,13 +70,13 @@ object KeyboardLayouts {
 
     // 기호(좌 6열) + 우측 계산기식 numpad(4열: 789/ 456* 123- 0.=+).
     // 맨 아랫줄은 메인과 동일한 actionRow, 백스페이스도 메인과 같은 위치(액션줄 윗줄 우측 끝).
-    val SYMBOLS: List<List<Key>> = listOf(
+    fun symbols(bottomArrows: Boolean): List<List<Key>> = listOf(
         charKeys("~ ` ! @ # $") + charKeys("7 8 9 /"),
         charKeys("% ^ & * ( )") + charKeys("4 5 6 *"),
         charKeys("- _ = + [ ]") + charKeys("1 2 3 -"),
         charKeys("{ } \\ | : ;") + charKeys("0 . = +"),
         charKeys("\" ' < > , . ?") + Key.Action(ActionType.BACKSPACE, "⌫"),
-        actionRow()
+        actionRow(bottomArrows)
     )
 
     /** 영문 대문자 변환 + 시프트한 숫자 → 특수문자. */
@@ -155,18 +158,20 @@ object KeyboardLayouts {
 
     // 맨 아래 기능키 줄 (맨 앞 Ctrl 추가, 문장부호는 ,→? .→, ?→. 로 순환):
     //  Ctrl · ?123 · 한/A · ◀ · [space] · ▲ · ▼ · ? · , · [space] · ▶ · . · ↵
-    private fun actionRow(): List<Key> = listOf(
+    // 분할(bottomArrows=false)이면 가운데 미니 방향키가 있으므로 방향키 자리에
+    // 자주 쓰는 특수문자(! ( ) /)를 둔다.
+    private fun actionRow(bottomArrows: Boolean = true): List<Key> = listOf(
         Key.Action(ActionType.CTRL, "ctrl"),
         Key.Action(ActionType.SYMBOLS, "?123"),
         Key.Action(ActionType.LANGUAGE, "한/A"),
-        Key.Action(ActionType.LEFT, "◀"),
+        if (bottomArrows) Key.Action(ActionType.LEFT, "◀") else Key.Char("!"),
         Key.Action(ActionType.SPACE, ""),
-        Key.Action(ActionType.UP, "▲"),
-        Key.Action(ActionType.DOWN, "▼"),
+        if (bottomArrows) Key.Action(ActionType.UP, "▲") else Key.Char("("),
+        if (bottomArrows) Key.Action(ActionType.DOWN, "▼") else Key.Char(")"),
         Key.Char("?"),
         Key.Action(ActionType.COMMA, ","),
         Key.Action(ActionType.SPACE, ""),
-        Key.Action(ActionType.RIGHT, "▶"),
+        if (bottomArrows) Key.Action(ActionType.RIGHT, "▶") else Key.Char("/"),
         Key.Action(ActionType.PERIOD, "."),
         Key.Action(ActionType.ENTER, "↵")
     )

@@ -75,6 +75,8 @@ class ImeService : InputMethodService(),
     // 접힘/펼침 프로파일별 레이아웃: 상단 보조줄 범위, 키 높이(dp).
     private var auxRows by mutableStateOf(AuxRows.ALL)
     private var keyHeight by mutableStateOf(52f)
+    // 접은(커버) 화면 여부. 접은 화면에선 클립보드를 상단 한 줄 스트립으로 띄운다.
+    private var foldedProfile by mutableStateOf(false)
     // 선택 모드: 켜져 있는 동안 커서 이동 키에 Shift 를 실어 텍스트를 선택한다.
     private var selectActive by mutableStateOf(false)
 
@@ -128,6 +130,7 @@ class ImeService : InputMethodService(),
                     pinnedClips = pinnedClips,
                     showClipboard = showClipboard,
                     selectActive = selectActive,
+                    clipInStrip = foldedProfile,
                     onKey = ::onKey,
                     onKeyLong = ::onKeyLong,
                     onPaste = ::onPasteClip,
@@ -156,6 +159,7 @@ class ImeService : InputMethodService(),
      */
     private fun loadProfile() {
         val folded = resources.configuration.smallestScreenWidthDp < 600
+        foldedProfile = folded
         val p = if (folded) PROFILE_FOLDED else PROFILE_UNFOLDED
         splitGap = prefs.getFloat(p + KEY_SPLIT_GAP, if (folded) 0f else 2f)
         keyHeight = prefs.getFloat(p + KEY_KEY_HEIGHT, if (folded) 56f else 52f)
@@ -339,6 +343,16 @@ class ImeService : InputMethodService(),
             ActionType.CTRL -> ctrlActive = !ctrlActive
             ActionType.ALT -> altActive = !altActive
             ActionType.CLIPBOARD -> showClipboard = !showClipboard
+
+            // 전체선택: Ctrl+A 키 이벤트를 그대로 전송(원격/터미널에서도 동작).
+            ActionType.SELECT_ALL -> {
+                commitComposing()
+                sendKeyWithMeta(
+                    ic, KeyEvent.KEYCODE_A,
+                    KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+                )
+                clearMods()
+            }
 
             ActionType.SPACE -> {
                 commitComposing()

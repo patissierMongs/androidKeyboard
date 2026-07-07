@@ -62,6 +62,7 @@ fun KeyboardView(
     pinnedClips: List<String>,
     showClipboard: Boolean,
     selectActive: Boolean,
+    clipInStrip: Boolean,
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
     onPaste: (String) -> Unit,
@@ -69,13 +70,21 @@ fun KeyboardView(
     onToggleSelect: () -> Unit,
 ) {
     val shifted = shiftState != ShiftState.OFF
-    val rows = remember(mode, shifted, auxRows) { resolveRows(mode, shifted, auxRows) }
+    // 분할이면 액션줄 방향키를 빼고 특수문자를 둔다(가운데 미니 방향키가 대신함).
+    val bottomArrows = splitGap <= 0f
+    val rows = remember(mode, shifted, auxRows, bottomArrows) {
+        resolveRows(mode, shifted, auxRows, bottomArrows)
+    }
     // 한/영 자판에서만 상단 보조줄(터미널/특수문자/숫자)을 낮게 둔다.
     val compactCount = if (mode == KeyboardMode.KOREAN || mode == KeyboardMode.ENGLISH)
         (rows.size - 4).coerceAtLeast(0) else 0
     // 고정 항목이 앞, 이후 최근 히스토리. 분할 슬롯/스트립이 함께 쓴다.
     val clipItems = pinnedClips.map { it to true } +
         clips.filter { it !in pinnedClips }.map { it to false }
+    // 접은 화면(또는 분할 안 함)에서는 클립보드를 위에 한 줄 추가되는 스트립으로,
+    // 펼친 분할 화면에서는 가운데 빈 칸에 넣는다.
+    val stripMode = showClipboard && (splitGap <= 0f || clipInStrip)
+    val slotClipMode = showClipboard && splitGap > 0f && !clipInStrip
 
     Surface(color = Color(0xFFECEFF1)) {
         Column(
@@ -83,8 +92,7 @@ fun KeyboardView(
                 .fillMaxWidth()
                 .padding(horizontal = 1.dp, vertical = 4.dp)
         ) {
-            // 분할이 아닐 때만 클립보드를 상단 가로 스트립으로.
-            if (showClipboard && splitGap <= 0f) ClipboardStrip(clipItems, onPaste, onPinToggle)
+            if (stripMode) ClipboardStrip(clipItems, onPaste, onPinToggle)
             rows.forEachIndexed { index, keys ->
                 val compact = index < compactCount
                 // 분할: 줄 가운데(weight 절반 지점)에 공백을 끼운다. 키 폭은 그대로.
@@ -104,7 +112,7 @@ fun KeyboardView(
                             CenterSlot(
                                 rowFromBottom = rows.size - 1 - index,
                                 rowFromTop = index,
-                                showClipboard = showClipboard,
+                                showClipboard = slotClipMode,
                                 selectActive = selectActive,
                                 clipItems = clipItems,
                                 onKey = onKey,
@@ -120,7 +128,10 @@ fun KeyboardView(
     }
 }
 
-/** 줄을 weight 누적 합이 절반에 가장 가까운 지점에서 나눠 [gap] 공백을 끼운다. */
+/**
+ * 줄을 weight 누적 합이 절반에 가장 가까운 지점에서 나눠 [gap] 공백을 끼운다.
+ * 동률이면 뒤쪽 지점을 택해 왼손 글쇠(ㅎ·ㅍ, g 등)가 왼쪽 블록에 남게 한다.
+ */
 private fun splitWithGap(keys: List<Key>, gap: Float): List<Key> {
     val total = keys.sumOf { keyWeight(it).toDouble() }
     var best = 1
@@ -129,7 +140,7 @@ private fun splitWithGap(keys: List<Key>, gap: Float): List<Key> {
     for (i in 0 until keys.size - 1) {
         acc += keyWeight(keys[i])
         val diff = abs(acc - total / 2)
-        if (diff < bestDiff) {
+        if (diff <= bestDiff) {
             bestDiff = diff
             best = i + 1
         }
@@ -156,7 +167,13 @@ private fun KeyRow(
             if (key is Key.Gap) {
                 if (gapContent != null) {
                     // 빈 칸도 그 줄의 키와 같은 높이의 셀 — 내용이 줄에 맞춰 박힌다.
-                    Box(modifier = Modifier.weight(key.weight).height(cellHeight)) {
+                    // 좌우 8dp 는 글자 키와의 오터치 방지용 데드존.
+                    Box(
+                        modifier = Modifier
+                            .weight(key.weight)
+                            .height(cellHeight)
+                            .padding(horizontal = 8.dp)
+                    ) {
                         gapContent()
                     }
                 } else {
@@ -231,7 +248,11 @@ private fun CenterSlot(
                 MiniKey("▲") { onKey(Key.Action(ActionType.UP, "▲")) }
                 MiniKey("▼") { onKey(Key.Action(ActionType.DOWN, "▼")) }
             }
-            3 -> MiniKey("esc") { onKey(Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)) }
+            3 -> {
+                MiniKey("esc") { onKey(Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)) }
+                // 전체선택: Ctrl+A 를 그대로 전송.
+                MiniKey("전체") { onKey(Key.Action(ActionType.SELECT_ALL, "전체")) }
+            }
             4 -> {
                 MiniKey("home") { onKey(Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME)) }
                 MiniKey("end") { onKey(Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END)) }
@@ -283,28 +304,37 @@ private fun RowScope.MiniKey(
     }
 }
 
-/** 분할이 아닐 때 상단 가로 클립보드 스트립. 고정 항목이 앞에 온다. */
+/** 키보드 위에 한 줄로 추가되는 클립보드 스트립. 고정 항목이 앞에 온다. */
 @Composable
 private fun ClipboardStrip(
     clipItems: List<Pair<String, Boolean>>,
     onPaste: (String) -> Unit,
     onPinToggle: (String) -> Unit,
 ) {
-    if (clipItems.isEmpty()) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(40.dp)
             .horizontalScroll(rememberScrollState())
             .padding(bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        if (clipItems.isEmpty()) {
+            Text(
+                "클립보드 비어 있음",
+                fontSize = 12.sp,
+                color = Color(0xFF607D8B),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+            )
+            return@Row
+        }
         clipItems.forEach { (text, pinned) ->
             ClipItem(
                 text = text,
                 pinned = pinned,
                 maxLines = 1,
                 fontSize = 12,
-                modifier = Modifier.widthIn(max = 160.dp),
+                modifier = Modifier.widthIn(max = 160.dp).fillMaxHeight(),
                 onPaste = onPaste,
                 onPinToggle = onPinToggle
             )
@@ -511,11 +541,16 @@ private fun KeyButton(
     }
 }
 
-private fun resolveRows(mode: KeyboardMode, shifted: Boolean, aux: AuxRows): List<List<Key>> {
+private fun resolveRows(
+    mode: KeyboardMode,
+    shifted: Boolean,
+    aux: AuxRows,
+    bottomArrows: Boolean,
+): List<List<Key>> {
     val base = when (mode) {
-        KeyboardMode.KOREAN -> KeyboardLayouts.korean(aux)
-        KeyboardMode.ENGLISH -> KeyboardLayouts.english(aux)
-        KeyboardMode.SYMBOLS -> KeyboardLayouts.SYMBOLS
+        KeyboardMode.KOREAN -> KeyboardLayouts.korean(aux, bottomArrows)
+        KeyboardMode.ENGLISH -> KeyboardLayouts.english(aux, bottomArrows)
+        KeyboardMode.SYMBOLS -> KeyboardLayouts.symbols(bottomArrows)
     }
     if (!shifted) return base
     return when (mode) {
