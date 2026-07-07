@@ -69,24 +69,28 @@ object KeyboardLayouts {
         AuxRows.NONE -> emptyList()
     }
 
-    // 기호 자판 — 글자 자판과 완전히 같은 골격(10키 / 9키 / 7키+⇧⌫ / 액션줄).
-    // 전환해도 줄 수·키 위치·가운데 칸이 그대로라 손 위치가 안 흔들린다.
-    // 2번째 줄은 US 자판의 기호 키 배열, Shift 로 짝 기호(~ _ + { } : " | ?)와
-    // 숫자줄 특수문자(! @ # …)가 나온다. 3번째 줄은 자주 쓰는 Shift 짝 직통.
+    // 기호 자판 — 골격(보조줄 + 10키/9키/⇧7키⌫/액션줄, 줄 수·높이·클립보드)은
+    // 글자 자판과 완전히 동일하고, 내용만 기호 + 계산기식 numpad 로 채운다.
+    // numpad 는 글자줄 3줄의 오른쪽 4열(789/ 456* 123-), 0 은 액션줄 ? 자리.
+    // 나머지 기호(~ ` [ ] { } \ | _)는 보조줄(터미널/특수문자줄)과 Shift 짝
+    // (< > ( ) → [ ] { }, / → ? 등)으로 커버한다.
     private fun symbolsMain(bottomArrows: Boolean): List<List<Key>> = listOf(
-        row("1 2 3 4 5 6 7 8 9 0"),
-        indentedRow("` - = [ ] ; ' \\ /"),
-        bottomLetterRow("_ : \" < > * |"),
-        actionRow(bottomArrows)
+        row("@ # $ % ^ & 7 8 9 /"),
+        indentedRow("' \" : ; = 4 5 6 *"),
+        bottomLetterRow("< > _ 1 2 3 -"),
+        // 액션줄은 동일 배치. ? 자리만 keypad 하단 0 (? 는 Shift+/ 로)
+        actionRow(bottomArrows).map { if (it == Key.Char("?")) Key.Char("0") else it }
     )
 
     fun symbols(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
         auxRowsFor(aux) + symbolsMain(bottomArrows)
 
-    // US 자판 기호 쌍(Shift). 숫자는 NUMBER_SHIFT 로 처리한다.
+    // US 자판 기호 쌍(Shift) + 대괄호류 보조 매핑. 숫자는 NUMBER_SHIFT 로 처리.
     private val SYMBOL_SHIFT = mapOf(
         "`" to "~", "-" to "_", "=" to "+", "[" to "{", "]" to "}",
-        ";" to ":", "'" to "\"", "\\" to "|", "/" to "?"
+        ";" to ":", "'" to "\"", "\\" to "|", "/" to "?",
+        // 보조줄이 숨은(접힘) 프로파일에서도 대괄호류에 닿도록.
+        "<" to "[", ">" to "]", "(" to "{", ")" to "}"
     )
 
     /** 기호 자판 시프트: 숫자 → 특수문자, US 기호 쌍 치환. */
