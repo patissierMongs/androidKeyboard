@@ -72,17 +72,23 @@ object KeyboardLayouts {
         AuxRows.NONE -> emptyList()
     }
 
-    // 기호 자판 — 골격(줄 수·높이·⇧⌫·액션줄 위치)은 글자 자판과 동일하되,
-    // 내용은 전용 구성으로 중복 없이 채운다. 보조줄 자리는 기능키(터미널줄) +
-    // 희소 기호 줄이고, 글자줄 3줄의 오른쪽 3~4열이 계산기식 numpad
-    // (789/ 456* 123-), 0 은 액션줄 ? 자리. ASCII 기호 32종 전부 직접 입력 가능.
+    // 기호 자판 — 골격(줄 수·높이·액션줄 위치)은 글자 자판과 같되, 내용은 전용.
+    // 세 글자줄을 '균일 폭 10칸'으로 맞춰 계산기식 numpad(오른쪽 cols 6~8:
+    // 789 / 456 / 123)가 세로로 곧게 정렬되게 한다. ⇧·⌫ 도 폭 1.
+    // numpad 오른쪽 위(나눗셈) 자리는 @(골뱅이) — 슬래시는 아래 액션줄/왼쪽 열에.
     private fun symbolsMain(bottomArrows: Boolean): List<List<Key>> = listOf(
-        row("< > { } [ ] 7 8 9 /"),
-        indentedRow("\" ' : ; ? 4 5 6 *"),
-        bottomLetterRow("= + | 1 2 3 -"),
-        // 액션줄은 동일 배치. ? 자리만 keypad 하단 0 (? 는 2번째 줄에 직통)
+        charKeys("< > { } [ ] 7 8 9 @"),
+        charKeys("\" ' : ; ! ? 4 5 6 *"),
+        symBottomRow("/ - _ | \\", "1 2 3"),
+        // 액션줄은 동일 배치. ? 자리만 keypad 0 (? 는 2번째 줄에 직통).
         actionRow(bottomArrows).map { if (it == Key.Char("?")) Key.Char("0") else it }
     )
+
+    // ⇧ + 기호 5칸 + 숫자 3칸(cols 6~8) + ⌫ = 10칸, 모두 폭 1 로 numpad 를 정렬.
+    private fun symBottomRow(syms: String, digits: String): List<Key> =
+        listOf<Key>(Key.Action(ActionType.SHIFT, "⇧", weight = 1f)) +
+            charKeys(syms) + charKeys(digits) +
+            Key.Action(ActionType.BACKSPACE, "⌫", weight = 1f)
 
     fun symbols(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
         symbolsAuxFor(aux) + symbolsMain(bottomArrows)
@@ -109,7 +115,8 @@ object KeyboardLayouts {
         Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)
     )
 
-    private fun symRareRow(): List<Key> = charKeys("~ ` ^ _ @ # $ % & \\")
+    // 글자줄·액션줄에 없는 나머지 기호(ASCII 전부 커버).
+    private fun symRareRow(): List<Key> = charKeys("~ ` ^ + = # $ % &")
 
     private fun symExtraRow(): List<Key> = charKeys("₩ € £ · ° ± × ÷ § …")
 
