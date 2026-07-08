@@ -121,7 +121,6 @@ fun KeyboardView(
     keyHeight: Float,
     auxRows: AuxRows,
     clips: List<String>,
-    pinnedClips: List<String>,
     snippets: List<String>,
     centerMode: CenterMode,
     selectActive: Boolean,
@@ -129,8 +128,8 @@ fun KeyboardView(
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
     onPaste: (String) -> Unit,
-    onPinToggle: (String) -> Unit,
-    onSnippetRun: (String) -> Unit,
+    onClipLong: (String) -> Unit,
+    onSnippetLong: (String) -> Unit,
     onToggleSelect: () -> Unit,
     expectVowel: () -> Boolean = { false },
     // 오타 측정: 글자 키 터치 시 (최종 글자, 셀 안 정규화 x, y) 를 보고한다.
@@ -147,26 +146,19 @@ fun KeyboardView(
     // 상단 보조줄(터미널/특수문자/숫자)은 낮게 둔다. 모든 자판이 보조줄 + 4줄
     // 골격을 공유하므로 앞쪽 초과분이 곧 보조줄이다.
     val compactCount = (rows.size - 4).coerceAtLeast(0)
-    // 고정 항목이 앞, 이후 최근 히스토리. 분할 슬롯/스트립이 함께 쓴다.
-    val clipItems = pinnedClips.map { it to true } +
-        clips.filter { it !in pinnedClips }.map { it to false }
-    // 가운데 칸(또는 스트립)에 뿌릴 목록. 커서 모드면 null.
-    val slotItems: List<Pair<String, Boolean>>? = when (centerMode) {
-        CenterMode.CURSOR -> null
-        CenterMode.CLIPBOARD -> clipItems
-        CenterMode.SNIPPETS -> snippets.map { it to false }
-    }
-    val isSnippet = centerMode == CenterMode.SNIPPETS
+    // 목록 모드: 가운데 칸이 좌(클립보드)/우(스니펫) 두 열로 나뉜다.
+    val listMode = centerMode != CenterMode.CURSOR
     // 접은 화면(또는 분할 안 함)에서는 목록을 위에 한 줄 스트립으로,
     // 펼친 분할 화면에서는 가운데 빈 칸에 넣는다.
-    val stripMode = slotItems != null && (splitGap <= 0f || clipInStrip)
-    val slotListMode = slotItems != null && splitGap > 0f && !clipInStrip
+    val stripMode = listMode && (splitGap <= 0f || clipInStrip)
+    val slotListMode = listMode && splitGap > 0f && !clipInStrip
 
-    // 항목이 줄 수보다 많으면 맨 아래 칸을 ▲▼ 페이지 키로 쓴다.
-    val pagerNeeded = slotListMode && (slotItems?.size ?: 0) > rows.size
+    // 어느 열이든 줄 수를 넘으면 맨 아래 칸을 ▲▼ 페이지 키로 쓴다(두 열 공통).
+    val longest = maxOf(clips.size, snippets.size)
+    val pagerNeeded = slotListMode && longest > rows.size
     val perPage = if (pagerNeeded) rows.size - 1 else rows.size
-    var page by remember(centerMode, slotItems?.size) { mutableIntStateOf(0) }
-    val maxPage = if (slotItems.isNullOrEmpty()) 0 else (slotItems.size - 1) / perPage
+    var page by remember(centerMode, clips.size, snippets.size) { mutableIntStateOf(0) }
+    val maxPage = if (longest == 0) 0 else (longest - 1) / perPage
 
     val colors = if (isSystemInDarkTheme()) DarkKbColors else LightKbColors
     CompositionLocalProvider(LocalKb provides colors) {
@@ -176,8 +168,15 @@ fun KeyboardView(
                     .fillMaxWidth()
                     .padding(horizontal = 1.dp, vertical = 4.dp)
             ) {
-                if (stripMode && slotItems != null) {
-                    ItemStrip(slotItems, isSnippet, onPaste, onPinToggle, onSnippetRun)
+                if (stripMode) {
+                    // 스트립은 한 줄이라 열을 나누지 않고 눌린 키의 목록만 보여준다.
+                    val isSnippet = centerMode == CenterMode.SNIPPETS
+                    ItemStrip(
+                        items = if (isSnippet) snippets else clips,
+                        isSnippet = isSnippet,
+                        onPaste = onPaste,
+                        onLong = if (isSnippet) onSnippetLong else onClipLong
+                    )
                 }
                 rows.forEachIndexed { index, keys ->
                     val compact = index < compactCount
@@ -203,8 +202,9 @@ fun KeyboardView(
                                 CenterSlot(
                                     rowFromBottom = rows.size - 1 - index,
                                     rowFromTop = index,
-                                    slotItems = if (slotListMode) slotItems else null,
-                                    isSnippet = isSnippet,
+                                    listMode = slotListMode,
+                                    clips = clips,
+                                    snippets = snippets,
                                     selectActive = selectActive,
                                     page = page,
                                     perPage = perPage,
@@ -212,8 +212,8 @@ fun KeyboardView(
                                     onPage = { delta -> page = (page + delta).coerceIn(0, maxPage) },
                                     onKey = onKey,
                                     onPaste = onPaste,
-                                    onPinToggle = onPinToggle,
-                                    onSnippetRun = onSnippetRun,
+                                    onClipLong = onClipLong,
+                                    onSnippetLong = onSnippetLong,
                                     onToggleSelect = onToggleSelect
                                 )
                             }
@@ -311,8 +311,9 @@ private fun KeyRow(
 
 /**
  * 분할 시 각 줄 가운데 빈 칸의 내용.
- * 목록 모드(클립보드/스니펫): 위에서부터 줄당 항목 하나. 항목이 넘치면 맨
- * 아래 칸이 ▲▼ 페이지 키. 클립은 길게 눌러 고정, 스니펫은 길게 눌러 입력+Enter.
+ * 목록 모드: 좌(클립보드)/우(스니펫) 두 열, 위에서부터 줄당 항목 하나씩.
+ * 길게 누르면 반대 열로 이동한다(클립 → 스니펫 = 고정, 스니펫 → 클립 = 해제).
+ * 어느 열이든 넘치면 맨 아래 칸이 ▲▼ 페이지 키(두 열 공통).
  * 커서 모드: 아래줄부터 선택 / ◀▶ / ▲▼ / esc·전체선택 / 복사·붙여넣기 /
  * 잘라내기·되돌리기.
  */
@@ -320,8 +321,9 @@ private fun KeyRow(
 private fun CenterSlot(
     rowFromBottom: Int,
     rowFromTop: Int,
-    slotItems: List<Pair<String, Boolean>>?,
-    isSnippet: Boolean,
+    listMode: Boolean,
+    clips: List<String>,
+    snippets: List<String>,
     selectActive: Boolean,
     page: Int,
     perPage: Int,
@@ -329,11 +331,11 @@ private fun CenterSlot(
     onPage: (Int) -> Unit,
     onKey: (Key) -> Unit,
     onPaste: (String) -> Unit,
-    onPinToggle: (String) -> Unit,
-    onSnippetRun: (String) -> Unit,
+    onClipLong: (String) -> Unit,
+    onSnippetLong: (String) -> Unit,
     onToggleSelect: () -> Unit,
 ) {
-    if (slotItems != null) {
+    if (listMode) {
         if (pagerNeeded && rowFromBottom == 0) {
             Row(modifier = Modifier.fillMaxSize()) {
                 MiniKey("▲") { onPage(-1) }
@@ -341,31 +343,25 @@ private fun CenterSlot(
             }
             return
         }
-        val item = slotItems.getOrNull(page * perPage + rowFromTop)
-        when {
-            item != null -> ClipItem(
-                text = item.first,
-                pinned = item.second,
-                snippet = isSnippet,
-                maxLines = 2,
-                fontSize = 11,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 2.dp, vertical = 2.5.dp),
+        val idx = page * perPage + rowFromTop
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            HalfSlot(
+                text = clips.getOrNull(idx),
+                snippet = false,
+                hintIfEmpty = rowFromTop == 0 && clips.isEmpty(),
                 onTap = onPaste,
-                onLong = if (isSnippet) onSnippetRun else onPinToggle
+                onLong = onClipLong
             )
-            slotItems.isEmpty() && rowFromTop == 0 -> Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Text(
-                    if (isSnippet) "스니펫 없음\n(설정 앱에서 추가)" else "클립보드 비어 있음",
-                    fontSize = 10.sp,
-                    color = LocalKb.current.textDim,
-                    textAlign = TextAlign.Center
-                )
-            }
+            HalfSlot(
+                text = snippets.getOrNull(idx),
+                snippet = true,
+                hintIfEmpty = rowFromTop == 0 && snippets.isEmpty(),
+                onTap = onPaste,
+                onLong = onSnippetLong
+            )
         }
         return
     }
@@ -400,6 +396,44 @@ private fun CenterSlot(
             }
         }
     }
+}
+
+/** 목록 모드의 한쪽 열 셀. 항목이 없으면 첫 줄에만 열 이름 힌트를 띄운다. */
+@Composable
+private fun RowScope.HalfSlot(
+    text: String?,
+    snippet: Boolean,
+    hintIfEmpty: Boolean,
+    onTap: (String) -> Unit,
+    onLong: (String) -> Unit,
+) {
+    if (text == null) {
+        Box(
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hintIfEmpty) {
+                Text(
+                    if (snippet) "스니펫" else "클립",
+                    fontSize = 9.sp,
+                    color = LocalKb.current.textDim
+                )
+            }
+        }
+        return
+    }
+    ClipItem(
+        text = text,
+        snippet = snippet,
+        maxLines = 2,
+        fontSize = 11,
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .padding(vertical = 2.5.dp),
+        onTap = onTap,
+        onLong = onLong
+    )
 }
 
 /** 빈 칸 안에 들어가는 미니 키. 일반 키와 같은 인셋/모양으로 줄에 맞춘다. */
@@ -465,14 +499,13 @@ private fun RowScope.MiniKey(
     }
 }
 
-/** 키보드 위에 한 줄로 추가되는 클립보드/스니펫 스트립. 고정 항목이 앞에 온다. */
+/** 키보드 위에 한 줄로 추가되는 클립보드/스니펫 스트립(접힘·비분할용). */
 @Composable
 private fun ItemStrip(
-    items: List<Pair<String, Boolean>>,
+    items: List<String>,
     isSnippet: Boolean,
     onPaste: (String) -> Unit,
-    onPinToggle: (String) -> Unit,
-    onSnippetRun: (String) -> Unit,
+    onLong: (String) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -484,23 +517,22 @@ private fun ItemStrip(
     ) {
         if (items.isEmpty()) {
             Text(
-                if (isSnippet) "스니펫 없음 (설정 앱에서 추가)" else "클립보드 비어 있음",
+                if (isSnippet) "스니펫 없음 (클립 항목을 길게 눌러 보관)" else "클립보드 비어 있음",
                 fontSize = 12.sp,
                 color = LocalKb.current.textDim,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
             )
             return@Row
         }
-        items.forEach { (text, pinned) ->
+        items.forEach { text ->
             ClipItem(
                 text = text,
-                pinned = pinned,
                 snippet = isSnippet,
                 maxLines = 1,
                 fontSize = 12,
                 modifier = Modifier.widthIn(max = 160.dp).fillMaxHeight(),
                 onTap = onPaste,
-                onLong = if (isSnippet) onSnippetRun else onPinToggle
+                onLong = onLong
             )
         }
     }
@@ -509,7 +541,6 @@ private fun ItemStrip(
 @Composable
 private fun ClipItem(
     text: String,
-    pinned: Boolean,
     snippet: Boolean,
     maxLines: Int,
     fontSize: Int,
@@ -520,11 +551,7 @@ private fun ClipItem(
     val kb = LocalKb.current
     val view = LocalView.current
     Surface(
-        color = when {
-            pinned -> kb.pinnedClip
-            snippet -> kb.snippet
-            else -> kb.key
-        },
+        color = if (snippet) kb.snippet else kb.key,
         shape = RoundedCornerShape(6.dp),
         shadowElevation = 1.dp,
         modifier = modifier.pointerInput(text) {
@@ -542,7 +569,7 @@ private fun ClipItem(
     ) {
         Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize()) {
             Text(
-                text = if (pinned) "📌 $text" else text,
+                text = text,
                 fontSize = fontSize.sp,
                 maxLines = maxLines,
                 overflow = TextOverflow.Ellipsis,

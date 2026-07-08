@@ -166,7 +166,8 @@ private fun SnippetSection(prefs: SharedPreferences) {
     ) {
         Text("스니펫", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Text(
-            "자주 쓰는 명령어/문자열. 키보드에서 탭 = 입력, 길게 = 입력+Enter(실행).",
+            "자주 쓰는 명령어/문자열 (가운데 오른쪽 열). 키보드에서 탭 = 입력,\n" +
+                "클립 항목을 길게 누르면 여기로 이동(고정), 스니펫을 길게 누르면 해제.",
             fontSize = 13.sp
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -197,6 +198,21 @@ private fun SnippetSection(prefs: SharedPreferences) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                // 배치(순서) 조정 — 위가 키보드에서 먼저 보인다.
+                TextButton(onClick = {
+                    if (index > 0) {
+                        val item = snippets.removeAt(index)
+                        snippets.add(index - 1, item)
+                        save()
+                    }
+                }) { Text("↑") }
+                TextButton(onClick = {
+                    if (index < snippets.lastIndex) {
+                        val item = snippets.removeAt(index)
+                        snippets.add(index + 1, item)
+                        save()
+                    }
+                }) { Text("↓") }
                 TextButton(onClick = {
                     snippets.removeAt(index)
                     save()

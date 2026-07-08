@@ -85,13 +85,12 @@ class ImeService : InputMethodService(),
     // 선택영역을 명시적으로 지우는 데 쓴다.
     private var hasSelection = false
 
-    // 클립보드: 자체 히스토리(최근 항목) + 고정 항목. 가운데 칸 모드는 📋 로 순환.
+    // 클립보드 히스토리(왼쪽 열) + 스니펫(오른쪽 열, 영구 보관).
+    // 항목을 길게 누르면 두 영역 사이를 오간다(클립 → 스니펫 = 고정).
     private val clipboard by lazy {
         getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
     private val clipHistory = mutableStateListOf<String>()
-    private val pinnedClips = mutableStateListOf<String>()
-    // 스니펫: 설정 앱에서 편집하는 자주 쓰는 문자열(명령어 등).
     private val snippets = mutableStateListOf<String>()
     private var centerMode by mutableStateOf(CenterMode.CURSOR)
 
@@ -123,6 +122,7 @@ class ImeService : InputMethodService(),
         pinned = prefs.getBoolean(KEY_PINNED, false)
         loadClips()
         loadSnippets()
+        migrateLegacyPins()
         typoTracker.loadJson(prefs.getString(KEY_TYPO_STATS, null))
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
@@ -157,7 +157,6 @@ class ImeService : InputMethodService(),
                     keyHeight = keyHeight,
                     auxRows = auxRows,
                     clips = clipHistory,
-                    pinnedClips = pinnedClips,
                     snippets = snippets,
                     centerMode = centerMode,
                     selectActive = selectActive,
@@ -165,8 +164,8 @@ class ImeService : InputMethodService(),
                     onKey = ::onKey,
                     onKeyLong = ::onKeyLong,
                     onPaste = ::onPasteClip,
-                    onPinToggle = ::onPinToggle,
-                    onSnippetRun = ::onSnippetRun,
+                    onClipLong = ::onClipLong,
+                    onSnippetLong = ::onSnippetLong,
                     onToggleSelect = { selectActive = !selectActive },
                     // 초성만 있는 상태 → 다음 자모는 모음일 확률이 높다(경계 스냅용).
                     expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel },
@@ -310,7 +309,7 @@ class ImeService : InputMethodService(),
             val text = clipboard.primaryClip
                 ?.takeIf { it.itemCount > 0 }
                 ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
-            if (!text.isNullOrEmpty() && text !in pinnedClips) {
+            if (!text.isNullOrEmpty() && text !in snippets) {
                 clipHistory.remove(text)
                 clipHistory.add(0, text)
                 while (clipHistory.size > 20) clipHistory.removeAt(clipHistory.size - 1)
@@ -319,24 +318,43 @@ class ImeService : InputMethodService(),
         }
     }
 
-    /** 클립 항목 고정/해제. 고정 항목은 히스토리 만료와 무관하게 유지된다. */
-    private fun onPinToggle(text: String) {
-        if (pinnedClips.remove(text)) {
-            clipHistory.remove(text)
-            clipHistory.add(0, text)
-        } else {
-            pinnedClips.add(0, text)
-            clipHistory.remove(text)
-        }
+    /** 클립 항목 길게 누름: 스니펫(오른쪽 열, 영구 보관)으로 이동 = 고정. */
+    private fun onClipLong(text: String) {
+        clipHistory.remove(text)
+        if (text !in snippets) snippets.add(0, text)
         persistClips()
+        persistSnippets()
     }
 
-    /** 히스토리/고정 항목을 저장해 프로세스가 죽어도 유지한다. */
+    /** 스니펫 길게 누름: 클립보드 히스토리(왼쪽 열)로 되돌린다. */
+    private fun onSnippetLong(text: String) {
+        snippets.remove(text)
+        clipHistory.remove(text)
+        clipHistory.add(0, text)
+        persistClips()
+        persistSnippets()
+    }
+
+    /** 히스토리를 저장해 프로세스가 죽어도 유지한다. */
     private fun persistClips() {
         prefs.edit()
-            .putString(KEY_CLIP_PINNED, JSONArray(pinnedClips.toList()).toString())
             .putString(KEY_CLIP_HISTORY, JSONArray(clipHistory.toList()).toString())
             .apply()
+    }
+
+    private fun persistSnippets() {
+        prefs.edit()
+            .putString(KEY_SNIPPETS, JSONArray(snippets.toList()).toString())
+            .apply()
+    }
+
+    /** 예전 '📌 고정' 항목을 스니펫으로 1회 승격(개념 통합 마이그레이션). */
+    private fun migrateLegacyPins() {
+        val legacy = readStringList(KEY_CLIP_PINNED)
+        if (legacy.isEmpty()) return
+        legacy.filter { it !in snippets }.forEach { snippets.add(0, it) }
+        prefs.edit().remove(KEY_CLIP_PINNED).apply()
+        persistSnippets()
     }
 
     private fun readStringList(key: String): List<String> = runCatching {
@@ -346,7 +364,6 @@ class ImeService : InputMethodService(),
     }.getOrDefault(emptyList())
 
     private fun loadClips() {
-        pinnedClips.addAll(readStringList(KEY_CLIP_PINNED))
         clipHistory.addAll(readStringList(KEY_CLIP_HISTORY))
     }
 
@@ -530,14 +547,6 @@ class ImeService : InputMethodService(),
         ic.commitText(text, 1)
     }
 
-    /** 스니펫 길게 누름: 입력 후 바로 Enter (터미널에서 명령 실행용). */
-    private fun onSnippetRun(text: String) {
-        val ic = currentInputConnection ?: return
-        selectActive = false
-        commitComposing()
-        ic.commitText(text, 1)
-        sendEnter(ic)
-    }
 
     /** 조합 중인 한글이 있으면 확정한다. */
     private fun commitComposing() {
