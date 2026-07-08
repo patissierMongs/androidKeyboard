@@ -26,9 +26,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,9 +39,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.hangulkeyboard.ui.AuxRows
+import org.json.JSONArray
 
 /**
  * 키보드 활성화 안내 + 접힘/펼침 프로파일별 설정 + 테스트 입력칸.
@@ -115,10 +119,14 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
 
         Text(
             "분할 간격이 0 이면 분할하지 않습니다. 분할하면 가운데 공간에\n" +
-                "커서 패드가 표시되고, 📋 키로 클립보드와 전환합니다.\n" +
-                "값을 바꾼 뒤 키보드를 다시 열면 적용됩니다.",
+                "커서 패드가 표시되고, 📋 키로 클립보드 → 스니펫 순으로 전환합니다.\n" +
+                "설정 변경은 키보드에 즉시 반영됩니다.",
             fontSize = 13.sp
         )
+
+        HorizontalDivider()
+
+        SnippetSection(prefs)
 
         // ── 테스트 입력칸 ──
         OutlinedTextField(
@@ -127,6 +135,68 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
             label = { Text("테스트 입력") },
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+/** 스니펫 편집. 키보드 가운데 칸 세 번째 모드(📋 두 번)에 뜬다. */
+@Composable
+private fun SnippetSection(prefs: SharedPreferences) {
+    val snippets = remember {
+        mutableStateListOf<String>().apply {
+            runCatching {
+                val arr = JSONArray(prefs.getString("snippets", null) ?: "[]")
+                repeat(arr.length()) { add(arr.getString(it)) }
+            }
+        }
+    }
+    fun save() {
+        prefs.edit().putString("snippets", JSONArray(snippets.toList()).toString()).apply()
+    }
+    var newSnippet by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("스니펫", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "자주 쓰는 명령어/문자열. 키보드에서 탭 = 입력, 길게 = 입력+Enter(실행).",
+            fontSize = 13.sp
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = newSnippet,
+                onValueChange = { newSnippet = it },
+                label = { Text("새 스니펫") },
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = {
+                    val t = newSnippet.trim()
+                    if (t.isNotEmpty() && t !in snippets) {
+                        snippets.add(t)
+                        save()
+                        newSnippet = ""
+                    }
+                },
+                modifier = Modifier.padding(start = 8.dp)
+            ) { Text("추가") }
+        }
+        snippets.forEachIndexed { index, snippet ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    snippet,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    snippets.removeAt(index)
+                    save()
+                }) { Text("삭제") }
+            }
+        }
     }
 }
 

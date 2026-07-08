@@ -27,8 +27,11 @@ enum class ActionType {
 /** 자판 모드. */
 enum class KeyboardMode { KOREAN, ENGLISH, SYMBOLS }
 
-/** 시프트 3단계: 해제 / 단일입력(한 글자 후 해제) / 지속(고정). */
+/** 시프트/컨트롤 3단계: 해제 / 단일입력(한 번 쓰면 해제) / 지속(고정). */
 enum class ShiftState { OFF, SINGLE, LOCKED }
+
+/** 분할 가운데 칸(접힘에선 상단 스트립)의 모드. 📋 키로 순환한다. */
+enum class CenterMode { CURSOR, CLIPBOARD, SNIPPETS }
 
 /**
  * 상단 보조줄(터미널/특수문자/숫자) 표시 범위.

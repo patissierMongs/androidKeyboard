@@ -29,6 +29,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.hangulkeyboard.hangul.HangulComposer
 import com.example.hangulkeyboard.ui.ActionType
 import com.example.hangulkeyboard.ui.AuxRows
+import com.example.hangulkeyboard.ui.CenterMode
 import com.example.hangulkeyboard.ui.Key
 import com.example.hangulkeyboard.ui.KeyboardMode
 import com.example.hangulkeyboard.ui.KeyboardView
@@ -67,8 +68,9 @@ class ImeService : InputMethodService(),
     private var previousMode = KeyboardMode.KOREAN
     // 핀(자동숨김 방지). 켜 두면 앱을 닫아도 유지된다.
     private var pinned by mutableStateOf(false)
-    // Ctrl/Alt 스티키 모디파이어. 켜지면 다음 키를 조합(META)으로 전송한다.
-    private var ctrlActive by mutableStateOf(false)
+    // Ctrl 은 시프트처럼 3단계(해제/단일/잠금) — 터미널 연속 Ctrl 조합용.
+    private var ctrlState by mutableStateOf(ShiftState.OFF)
+    // Alt 스티키 모디파이어. 켜지면 다음 키를 조합(META)으로 전송한다.
     private var altActive by mutableStateOf(false)
     // 분할 키보드 가운데 공백 폭(키 폭 단위). 0 이면 분할 안 함. 앱에서 조절.
     private var splitGap by mutableStateOf(0f)
@@ -83,21 +85,25 @@ class ImeService : InputMethodService(),
     // 선택영역을 명시적으로 지우는 데 쓴다.
     private var hasSelection = false
 
-    // 클립보드: 자체 히스토리(최근 항목) + 고정 항목 + 표시 여부.
+    // 클립보드: 자체 히스토리(최근 항목) + 고정 항목. 가운데 칸 모드는 📋 로 순환.
     private val clipboard by lazy {
         getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
     private val clipHistory = mutableStateListOf<String>()
     private val pinnedClips = mutableStateListOf<String>()
-    private var showClipboard by mutableStateOf(false)
+    // 스니펫: 설정 앱에서 편집하는 자주 쓰는 문자열(명령어 등).
+    private val snippets = mutableStateListOf<String>()
+    private var centerMode by mutableStateOf(CenterMode.CURSOR)
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
     // 설정 앱에서 값을 바꾸면 키보드를 다시 열지 않아도 즉시 반영한다.
     // (prefs 는 리스너를 약참조로 들고 있으므로 필드로 강참조를 유지해야 한다.)
     private val prefsListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key != null && (key.startsWith(PROFILE_FOLDED) || key.startsWith(PROFILE_UNFOLDED))) {
-                loadProfile()
+            when {
+                key == null -> Unit
+                key == KEY_SNIPPETS -> loadSnippets()
+                key.startsWith(PROFILE_FOLDED) || key.startsWith(PROFILE_UNFOLDED) -> loadProfile()
             }
         }
 
@@ -107,6 +113,7 @@ class ImeService : InputMethodService(),
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         pinned = prefs.getBoolean(KEY_PINNED, false)
         loadClips()
+        loadSnippets()
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
     }
@@ -134,20 +141,22 @@ class ImeService : InputMethodService(),
                 KeyboardView(
                     mode = mode,
                     shiftState = shiftState,
-                    ctrlActive = ctrlActive,
+                    ctrlState = ctrlState,
                     altActive = altActive,
                     splitGap = splitGap,
                     keyHeight = keyHeight,
                     auxRows = auxRows,
                     clips = clipHistory,
                     pinnedClips = pinnedClips,
-                    showClipboard = showClipboard,
+                    snippets = snippets,
+                    centerMode = centerMode,
                     selectActive = selectActive,
                     clipInStrip = foldedProfile,
                     onKey = ::onKey,
                     onKeyLong = ::onKeyLong,
                     onPaste = ::onPasteClip,
                     onPinToggle = ::onPinToggle,
+                    onSnippetRun = ::onSnippetRun,
                     onToggleSelect = { selectActive = !selectActive },
                     // 초성만 있는 상태 → 다음 자모는 모음일 확률이 높다(경계 스냅용).
                     expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel }
@@ -243,6 +252,7 @@ class ImeService : InputMethodService(),
         super.onStartInput(attribute, restarting)
         composer.flush()
         shiftState = ShiftState.OFF
+        ctrlState = ShiftState.OFF
         selectActive = false
         // 숫자/전화 입력칸이면 기호 자판으로 시작
         attribute?.let {
@@ -303,14 +313,21 @@ class ImeService : InputMethodService(),
             .apply()
     }
 
+    private fun readStringList(key: String): List<String> = runCatching {
+        val raw = prefs.getString(key, null) ?: return@runCatching emptyList()
+        val arr = JSONArray(raw)
+        List(arr.length()) { arr.getString(it) }
+    }.getOrDefault(emptyList())
+
     private fun loadClips() {
-        fun read(key: String): List<String> = runCatching {
-            val raw = prefs.getString(key, null) ?: return@runCatching emptyList()
-            val arr = JSONArray(raw)
-            List(arr.length()) { arr.getString(it) }
-        }.getOrDefault(emptyList())
-        pinnedClips.addAll(read(KEY_CLIP_PINNED))
-        clipHistory.addAll(read(KEY_CLIP_HISTORY))
+        pinnedClips.addAll(readStringList(KEY_CLIP_PINNED))
+        clipHistory.addAll(readStringList(KEY_CLIP_HISTORY))
+    }
+
+    /** 설정 앱에서 편집한 스니펫을 (재)로드한다. */
+    private fun loadSnippets() {
+        snippets.clear()
+        snippets.addAll(readStringList(KEY_SNIPPETS))
     }
 
     // ---- 입력 처리 ----
@@ -339,7 +356,7 @@ class ImeService : InputMethodService(),
         selectActive = false
         // Ctrl/Alt 조합: 다음 키를 실제 키이벤트로 보낸다. 터미널/원격에서 Ctrl+C 등.
         // 한글 자판이면 자모를 그 자리의 QWERTY 키로 매핑해 조합을 유지한다(ㅂ→Q 등).
-        if (ctrlActive || altActive) {
+        if (ctrlState != ShiftState.OFF || altActive) {
             commitComposing()
             val keyCode = latinKeyCode(text) ?: jamoKeyCode(text)
             if (keyCode != null) sendKeyWithMeta(ic, keyCode, activeMeta())
@@ -394,9 +411,19 @@ class ImeService : InputMethodService(),
                 }
             }
 
-            ActionType.CTRL -> ctrlActive = !ctrlActive
+            // Ctrl 3단계 순환: 해제 → 단일(한 번 쓰면 해제) → 잠금 → 해제
+            ActionType.CTRL -> ctrlState = when (ctrlState) {
+                ShiftState.OFF -> ShiftState.SINGLE
+                ShiftState.SINGLE -> ShiftState.LOCKED
+                ShiftState.LOCKED -> ShiftState.OFF
+            }
             ActionType.ALT -> altActive = !altActive
-            ActionType.CLIPBOARD -> showClipboard = !showClipboard
+            // 가운데 칸/스트립 모드 순환: 커서 → 클립보드 → 스니펫 → 커서
+            ActionType.CLIPBOARD -> centerMode = when (centerMode) {
+                CenterMode.CURSOR -> CenterMode.CLIPBOARD
+                CenterMode.CLIPBOARD -> CenterMode.SNIPPETS
+                CenterMode.SNIPPETS -> CenterMode.CURSOR
+            }
 
             // 전체선택/복사/붙여넣기/잘라내기/되돌리기: Ctrl 조합 키 이벤트를
             // 그대로 전송(원격/터미널에서도 동작). 실행 후 선택 모드는 해제.
@@ -465,12 +492,21 @@ class ImeService : InputMethodService(),
         ic.commitText(text, 1)
     }
 
-    /** 클립보드 리스트에서 항목을 눌러 붙여넣기. 패널은 켜진 채 유지(연속 붙여넣기). */
+    /** 클립보드/스니펫 항목을 눌러 입력. 패널은 켜진 채 유지(연속 입력). */
     private fun onPasteClip(text: String) {
         val ic = currentInputConnection ?: return
         selectActive = false
         commitComposing()
         ic.commitText(text, 1)
+    }
+
+    /** 스니펫 길게 누름: 입력 후 바로 Enter (터미널에서 명령 실행용). */
+    private fun onSnippetRun(text: String) {
+        val ic = currentInputConnection ?: return
+        selectActive = false
+        commitComposing()
+        ic.commitText(text, 1)
+        sendEnter(ic)
     }
 
     /** 조합 중인 한글이 있으면 확정한다. */
@@ -505,7 +541,7 @@ class ImeService : InputMethodService(),
     /** 현재 켜진 Ctrl/Alt(+시프트) 조합의 meta 비트. */
     private fun activeMeta(): Int {
         var m = 0
-        if (ctrlActive) m = m or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+        if (ctrlState != ShiftState.OFF) m = m or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         if (altActive) m = m or KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
         if (shiftState != ShiftState.OFF) {
             m = m or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
@@ -526,7 +562,8 @@ class ImeService : InputMethodService(),
     }
 
     private fun clearMods() {
-        ctrlActive = false
+        // Ctrl 단일은 한 번 쓰면 해제, 잠금은 유지(다시 눌러 해제).
+        if (ctrlState == ShiftState.SINGLE) ctrlState = ShiftState.OFF
         altActive = false
     }
 
@@ -599,6 +636,8 @@ class ImeService : InputMethodService(),
         const val KEY_AUX_ROWS = "aux_rows"
         const val KEY_CLIP_HISTORY = "clip_history"
         const val KEY_CLIP_PINNED = "clip_pinned"
+        // MainActivity 스니펫 편집 화면과 공유하는 키.
+        const val KEY_SNIPPETS = "snippets"
 
         // 선택(Shift)을 실을 수 있는 커서 이동 키. 그 외 키는 선택 모드를 해제한다.
         val MOVEMENT_CODES = setOf(
