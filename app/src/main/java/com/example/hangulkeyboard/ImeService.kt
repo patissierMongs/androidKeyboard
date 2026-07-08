@@ -445,12 +445,13 @@ class ImeService : InputMethodService(),
                 ShiftState.LOCKED -> ShiftState.OFF
             }
             ActionType.ALT -> altActive = !altActive
-            // 가운데 칸/스트립 모드 순환: 커서 → 클립보드 → 스니펫 → 커서
-            ActionType.CLIPBOARD -> centerMode = when (centerMode) {
-                CenterMode.CURSOR -> CenterMode.CLIPBOARD
-                CenterMode.CLIPBOARD -> CenterMode.SNIPPETS
-                CenterMode.SNIPPETS -> CenterMode.CURSOR
-            }
+            // 📋/✂ 는 각자 자기 모드를 토글한다(길게 누르면 서로 교차 전환).
+            ActionType.CLIPBOARD -> centerMode =
+                if (centerMode == CenterMode.CLIPBOARD) CenterMode.CURSOR
+                else CenterMode.CLIPBOARD
+            ActionType.SNIPPETS -> centerMode =
+                if (centerMode == CenterMode.SNIPPETS) CenterMode.CURSOR
+                else CenterMode.SNIPPETS
 
             // 전체선택/복사/붙여넣기/잘라내기/되돌리기: Ctrl 조합 키 이벤트를
             // 그대로 전송(원격/터미널에서도 동작). 실행 후 선택 모드는 해제.
@@ -628,14 +629,21 @@ class ImeService : InputMethodService(),
     }
 
     /**
-     * 길게 누름 처리. 한/A 를 길게 누르면 Windows 원격 등 호스트의 한/영을
-     * 토글하도록 오른쪽 Alt(한/영) 키 이벤트를 보낸다.
+     * 길게 누름 처리.
+     * 한/A: Windows 원격 등 호스트의 한/영 토글(오른쪽 Alt 키 이벤트).
+     * 📋/✂: 서로의 모드로 교차 전환.
      */
     private fun onKeyLong(key: Key) {
-        if (key is Key.Action && key.type == ActionType.LANGUAGE) {
-            val ic = currentInputConnection ?: return
-            commitComposing()
-            sendKeyWithMeta(ic, KeyEvent.KEYCODE_ALT_RIGHT, 0)
+        if (key !is Key.Action) return
+        when (key.type) {
+            ActionType.LANGUAGE -> {
+                val ic = currentInputConnection ?: return
+                commitComposing()
+                sendKeyWithMeta(ic, KeyEvent.KEYCODE_ALT_RIGHT, 0)
+            }
+            ActionType.CLIPBOARD -> centerMode = CenterMode.SNIPPETS
+            ActionType.SNIPPETS -> centerMode = CenterMode.CLIPBOARD
+            else -> Unit
         }
     }
 

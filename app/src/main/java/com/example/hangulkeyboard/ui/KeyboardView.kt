@@ -192,7 +192,7 @@ fun KeyboardView(
                         shiftState = shiftState,
                         ctrlState = ctrlState,
                         altActive = altActive,
-                        centerActive = centerMode != CenterMode.CURSOR,
+                        centerMode = centerMode,
                         expectVowel = expectVowel,
                         onCharTouch = onCharTouch,
                         confusionBoost = confusionBoost,
@@ -258,7 +258,7 @@ private fun KeyRow(
     shiftState: ShiftState,
     ctrlState: ShiftState,
     altActive: Boolean,
-    centerActive: Boolean,
+    centerMode: CenterMode,
     expectVowel: () -> Boolean,
     onCharTouch: (String, Float, Float) -> Unit,
     confusionBoost: (String, String) -> Boolean,
@@ -290,7 +290,7 @@ private fun KeyRow(
                     shiftState = shiftState,
                     ctrlState = ctrlState,
                     altActive = altActive,
-                    centerActive = centerActive,
+                    centerMode = centerMode,
                     compact = compact,
                     firstRow = firstRow,
                     keyHeight = keyHeight,
@@ -559,7 +559,7 @@ private fun KeyButton(
     shiftState: ShiftState,
     ctrlState: ShiftState,
     altActive: Boolean,
-    centerActive: Boolean,
+    centerMode: CenterMode,
     compact: Boolean,
     firstRow: Boolean,
     keyHeight: Float,
@@ -579,7 +579,10 @@ private fun KeyButton(
         key is Key.Action && key.type == ActionType.CTRL && ctrlState == ShiftState.LOCKED -> kb.accent
         key is Key.Action && key.type == ActionType.CTRL && ctrlState == ShiftState.SINGLE -> kb.accentSoft
         key is Key.Action && key.type == ActionType.ALT && altActive -> kb.accent
-        key is Key.Action && key.type == ActionType.CLIPBOARD && centerActive -> kb.accent
+        key is Key.Action && key.type == ActionType.CLIPBOARD &&
+            centerMode == CenterMode.CLIPBOARD -> kb.accent
+        key is Key.Action && key.type == ActionType.SNIPPETS &&
+            centerMode == CenterMode.SNIPPETS -> kb.accent
         key is Key.Action && key.type == ActionType.SHIFT && shiftState == ShiftState.LOCKED -> kb.accent
         key is Key.Action && key.type == ActionType.SHIFT && shiftState == ShiftState.SINGLE -> kb.accentSoft
         key is Key.Action && key.type == ActionType.SPACE -> kb.key
@@ -609,8 +612,10 @@ private fun KeyButton(
     val repeatable = key is Key.Action && key.type in setOf(
         ActionType.BACKSPACE, ActionType.LEFT, ActionType.RIGHT, ActionType.UP, ActionType.DOWN
     )
-    // 한/A 는 길게 누르면 원격 호스트 한/영 전환 키를 보낸다.
-    val hasLongPress = key is Key.Action && key.type == ActionType.LANGUAGE
+    // 길게 누름이 있는 키: 한/A(호스트 한/영 전환), 📋/✂(모드 교차 전환).
+    val hasLongPress = key is Key.Action && key.type in setOf(
+        ActionType.LANGUAGE, ActionType.CLIPBOARD, ActionType.SNIPPETS
+    )
     val isSpace = key is Key.Action && key.type == ActionType.SPACE
     val isChar = key is Key.Char
     // 키 프리뷰(눌린 글쇠 풍선) 상태. 글자 키만.

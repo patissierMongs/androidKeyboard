@@ -20,7 +20,7 @@ sealed interface Key {
 enum class ActionType {
     SHIFT, BACKSPACE, LANGUAGE, SYMBOLS, SPACE, ENTER, COMMA, PERIOD, PIN,
     LEFT, RIGHT, UP, DOWN,
-    CTRL, ALT, CLIPBOARD,
+    CTRL, ALT, CLIPBOARD, SNIPPETS,
     SELECT_ALL, COPY, PASTE, CUT, UNDO
 }
 
@@ -72,21 +72,46 @@ object KeyboardLayouts {
         AuxRows.NONE -> emptyList()
     }
 
-    // 기호 자판 — 골격(보조줄 + 10키/9키/⇧7키⌫/액션줄, 줄 수·높이·클립보드)은
-    // 글자 자판과 완전히 동일하고, 내용만 기호 + 계산기식 numpad 로 채운다.
-    // numpad 는 글자줄 3줄의 오른쪽 4열(789/ 456* 123-), 0 은 액션줄 ? 자리.
-    // 나머지 기호(~ ` [ ] { } \ | _)는 보조줄(터미널/특수문자줄)과 Shift 짝
-    // (< > ( ) → [ ] { }, / → ? 등)으로 커버한다.
+    // 기호 자판 — 골격(줄 수·높이·⇧⌫·액션줄 위치)은 글자 자판과 동일하되,
+    // 내용은 전용 구성으로 중복 없이 채운다. 보조줄 자리는 기능키(터미널줄) +
+    // 희소 기호 줄이고, 글자줄 3줄의 오른쪽 3~4열이 계산기식 numpad
+    // (789/ 456* 123-), 0 은 액션줄 ? 자리. ASCII 기호 32종 전부 직접 입력 가능.
     private fun symbolsMain(bottomArrows: Boolean): List<List<Key>> = listOf(
-        row("@ # $ % ^ & 7 8 9 /"),
-        indentedRow("' \" : ; = 4 5 6 *"),
-        bottomLetterRow("< > _ 1 2 3 -"),
-        // 액션줄은 동일 배치. ? 자리만 keypad 하단 0 (? 는 Shift+/ 로)
+        row("< > { } [ ] 7 8 9 /"),
+        indentedRow("\" ' : ; ? 4 5 6 *"),
+        bottomLetterRow("= + | 1 2 3 -"),
+        // 액션줄은 동일 배치. ? 자리만 keypad 하단 0 (? 는 2번째 줄에 직통)
         actionRow(bottomArrows).map { if (it == Key.Char("?")) Key.Char("0") else it }
     )
 
     fun symbols(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
-        auxRowsFor(aux) + symbolsMain(bottomArrows)
+        symbolsAuxFor(aux) + symbolsMain(bottomArrows)
+
+    // 기호 자판의 보조줄: 글자 자판과 줄 수는 같게, 내용은 중복 없이.
+    // 터미널 기능줄(+-= 대신 esc) / 희소 기호 / 확장 기호(통화·수식) 순.
+    private fun symbolsAuxFor(aux: AuxRows): List<List<Key>> = when (aux) {
+        AuxRows.ALL -> listOf(symTerminalRow(), symRareRow(), symExtraRow())
+        AuxRows.TERMINAL_NUMBER -> listOf(symTerminalRow(), symRareRow())
+        AuxRows.TERMINAL -> listOf(symTerminalRow())
+        AuxRows.NONE -> emptyList()
+    }
+
+    private fun symTerminalRow(): List<Key> = listOf(
+        Key.KeyCode("tab", KeyEvent.KEYCODE_TAB),
+        Key.Action(ActionType.ALT, "alt"),
+        Key.KeyCode("del", KeyEvent.KEYCODE_FORWARD_DEL),
+        Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME),
+        Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END),
+        Key.Action(ActionType.CLIPBOARD, "📋"),
+        Key.Action(ActionType.SNIPPETS, "✂"),
+        Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP),
+        Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN),
+        Key.KeyCode("esc", KeyEvent.KEYCODE_ESCAPE)
+    )
+
+    private fun symRareRow(): List<Key> = charKeys("~ ` ^ _ @ # $ % & \\")
+
+    private fun symExtraRow(): List<Key> = charKeys("₩ € £ · ° ± × ÷ § …")
 
     // US 자판 기호 쌍(Shift) + 대괄호류 보조 매핑. 숫자는 NUMBER_SHIFT 로 처리.
     private val SYMBOL_SHIFT = mapOf(
@@ -96,26 +121,26 @@ object KeyboardLayouts {
         "<" to "[", ">" to "]", "(" to "{", ")" to "}"
     )
 
-    /** 기호 자판 시프트: 숫자 → 특수문자, US 기호 쌍 치환. */
+    /** 기호 자판 시프트: 숫자 → 특수문자, US 기호 쌍 치환. weight 유지. */
     fun shiftSymbols(rows: List<List<Key>>): List<List<Key>> =
         rows.map { line ->
             line.map { key ->
                 if (key is Key.Char)
                     (NUMBER_SHIFT[key.label] ?: SYMBOL_SHIFT[key.label])
-                        ?.let { Key.Char(it) } ?: key
+                        ?.let { s -> key.copy(label = s, output = s) } ?: key
                 else key
             }
         }
 
-    /** 영문 대문자 변환 + 시프트한 숫자 → 특수문자. */
+    /** 영문 대문자 변환 + 시프트한 숫자 → 특수문자. weight 는 유지(레이아웃 불변). */
     fun shiftEnglish(rows: List<List<Key>>): List<List<Key>> =
         rows.map { line ->
             line.map { key ->
                 when {
                     key is Key.Char && key.label.length == 1 && key.label[0].isLetter() ->
-                        Key.Char(key.label.uppercase(), key.output.uppercase())
+                        key.copy(label = key.label.uppercase(), output = key.output.uppercase())
                     key is Key.Char && NUMBER_SHIFT.containsKey(key.label) ->
-                        Key.Char(NUMBER_SHIFT.getValue(key.label))
+                        NUMBER_SHIFT.getValue(key.label).let { key.copy(label = it, output = it) }
                     else -> key
                 }
             }
@@ -133,13 +158,13 @@ object KeyboardLayouts {
         "6" to "^", "7" to "&", "8" to "*", "9" to "(", "0" to ")"
     )
 
-    /** 한글 시프트(쌍자음/이중모음) + 시프트한 숫자 → 특수문자. */
+    /** 한글 시프트(쌍자음/이중모음) + 시프트한 숫자 → 특수문자. weight 유지. */
     fun shiftKorean(rows: List<List<Key>>): List<List<Key>> =
         rows.map { line ->
             line.map { key ->
                 if (key is Key.Char)
                     (KOREAN_SHIFT[key.label] ?: NUMBER_SHIFT[key.label])
-                        ?.let { Key.Char(it) } ?: key
+                        ?.let { s -> key.copy(label = s, output = s) } ?: key
                 else key
             }
         }
@@ -164,7 +189,8 @@ object KeyboardLayouts {
     // 상단 숫자줄. 시프트하면 NUMBER_SHIFT 매핑으로 특수문자가 된다.
     private fun numberRow(): List<Key> = charKeys("1 2 3 4 5 6 7 8 9 0")
 
-    // 맨 윗줄: 코딩/터미널에서 자주 쓰는 키. 맨 앞은 Tab(기존 Ctrl 자리).
+    // 맨 윗줄: 코딩/터미널에서 자주 쓰는 키. 📋 = 클립보드, ✂ = 스니펫
+    // (각각 탭 = 토글, 길게 = 서로 교차 전환).
     private fun terminalRow(): List<Key> = listOf(
         Key.KeyCode("tab", KeyEvent.KEYCODE_TAB),
         Key.Action(ActionType.ALT, "alt"),
@@ -172,6 +198,7 @@ object KeyboardLayouts {
         Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME),
         Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END),
         Key.Action(ActionType.CLIPBOARD, "📋"),
+        Key.Action(ActionType.SNIPPETS, "✂"),
         Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP),
         Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN),
         Key.Char("+"),
