@@ -133,6 +133,10 @@ fun KeyboardView(
     onSnippetRun: (String) -> Unit,
     onToggleSelect: () -> Unit,
     expectVowel: () -> Boolean = { false },
+    // 오타 측정: 글자 키 터치 시 (최종 글자, 셀 안 정규화 x, y) 를 보고한다.
+    onCharTouch: (String, Float, Float) -> Unit = { _, _, _ -> },
+    // 실측 혼동이 잦은 경계는 스냅 폭을 넓힌다.
+    confusionBoost: (String, String) -> Boolean = { _, _ -> false },
 ) {
     val shifted = shiftState != ShiftState.OFF
     // 분할이면 액션줄 방향키를 빼고 특수문자를 둔다(가운데 미니 방향키가 대신함).
@@ -190,6 +194,8 @@ fun KeyboardView(
                         altActive = altActive,
                         centerActive = centerMode != CenterMode.CURSOR,
                         expectVowel = expectVowel,
+                        onCharTouch = onCharTouch,
+                        confusionBoost = confusionBoost,
                         onKey = onKey,
                         onKeyLong = onKeyLong,
                         gapContent = if (splitGap > 0f) {
@@ -254,6 +260,8 @@ private fun KeyRow(
     altActive: Boolean,
     centerActive: Boolean,
     expectVowel: () -> Boolean,
+    onCharTouch: (String, Float, Float) -> Unit,
+    confusionBoost: (String, String) -> Boolean,
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
     gapContent: (@Composable () -> Unit)? = null,
@@ -290,6 +298,8 @@ private fun KeyRow(
                     neighborLeft = (keys.getOrNull(i - 1) as? Key.Char)?.output?.singleOrNull(),
                     neighborRight = (keys.getOrNull(i + 1) as? Key.Char)?.output?.singleOrNull(),
                     expectVowel = expectVowel,
+                    onCharTouch = onCharTouch,
+                    confusionBoost = confusionBoost,
                     modifier = Modifier.weight(keyWeight(key)),
                     onKey = onKey,
                     onKeyLong = onKeyLong
@@ -556,6 +566,8 @@ private fun KeyButton(
     neighborLeft: Char?,
     neighborRight: Char?,
     expectVowel: () -> Boolean,
+    onCharTouch: (String, Float, Float) -> Unit,
+    confusionBoost: (String, String) -> Boolean,
     modifier: Modifier,
     onKey: (Key) -> Unit,
     onKeyLong: (Key) -> Unit,
@@ -678,11 +690,18 @@ private fun KeyButton(
             )
         }
         // 글자 키: 터치 x 좌표를 받아 경계 스냅(모음이 올 자리에서 자음 키의
-        // 가장자리를 눌렀으면 이웃 모음으로 보정)을 적용한다.
+        // 가장자리를 눌렀으면 이웃 모음으로 보정)을 적용하고, 오타 측정기에
+        // 터치 지점을 보고한다.
         isChar -> Modifier.pointerInput(key, neighborLeft, neighborRight) {
             detectTapGestures(onTap = { pos ->
-                press(resolveEdgeSnap(key as Key.Char, pos.x, size.width.toFloat(),
-                    neighborLeft, neighborRight, expectVowel))
+                val resolved = resolveEdgeSnap(
+                    key as Key.Char, pos.x, size.width.toFloat(),
+                    neighborLeft, neighborRight, expectVowel, confusionBoost
+                )
+                (resolved as? Key.Char)?.let {
+                    onCharTouch(it.output, pos.x / size.width, pos.y / size.height)
+                }
+                press(resolved)
             })
         }
         else -> Modifier.clickable { press(key) }
@@ -759,7 +778,8 @@ private fun KeyButton(
 
 /**
  * 경계 스냅: 초성만 있는 상태(다음은 모음일 확률이 높음)에서 자음 키의
- * 가장자리(폭의 22% 이내)를 눌렀고 그쪽 이웃이 모음이면 그 모음으로 보정한다.
+ * 가장자리를 눌렀고 그쪽 이웃이 모음이면 그 모음으로 보정한다.
+ * 기본 폭은 22%, 실측 혼동([confusionBoost])이 잦은 경계는 30%로 넓힌다.
  * 확신이 없는 상황(가운데 터치, 모음 키, 조합 문맥 아님)은 건드리지 않는다.
  */
 private fun resolveEdgeSnap(
@@ -769,15 +789,17 @@ private fun resolveEdgeSnap(
     neighborLeft: Char?,
     neighborRight: Char?,
     expectVowel: () -> Boolean,
+    confusionBoost: (String, String) -> Boolean,
 ): Key {
     val self = key.output.singleOrNull() ?: return key
     if (!isJamoConsonant(self) || !expectVowel()) return key
-    val edge = width * 0.22f
-    if (x < edge && neighborLeft != null && isJamoVowel(neighborLeft)) {
-        return Key.Char(neighborLeft.toString())
+    if (neighborLeft != null && isJamoVowel(neighborLeft)) {
+        val frac = if (confusionBoost(self.toString(), neighborLeft.toString())) 0.30f else 0.22f
+        if (x < width * frac) return Key.Char(neighborLeft.toString())
     }
-    if (x > width - edge && neighborRight != null && isJamoVowel(neighborRight)) {
-        return Key.Char(neighborRight.toString())
+    if (neighborRight != null && isJamoVowel(neighborRight)) {
+        val frac = if (confusionBoost(self.toString(), neighborRight.toString())) 0.30f else 0.22f
+        if (x > width * (1f - frac)) return Key.Char(neighborRight.toString())
     }
     return key
 }

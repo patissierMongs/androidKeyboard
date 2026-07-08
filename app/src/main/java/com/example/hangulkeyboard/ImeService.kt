@@ -94,6 +94,12 @@ class ImeService : InputMethodService(),
     // 스니펫: 설정 앱에서 편집하는 자주 쓰는 문자열(명령어 등).
     private val snippets = mutableStateListOf<String>()
     private var centerMode by mutableStateOf(CenterMode.CURSOR)
+
+    // 오타 측정기: 터치 편향 + (입력→백스페이스→다른 키) 혼동 쌍을 기기 안에만
+    // 기록한다. 설정 앱의 '오타 분석' 화면이 이 데이터를 읽고, 혼동이 잦은
+    // 경계는 스냅 폭을 자동으로 넓힌다.
+    private val typoTracker = TypoTracker()
+    private var typoDirty = 0
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
     // 설정 앱에서 값을 바꾸면 키보드를 다시 열지 않아도 즉시 반영한다.
@@ -103,6 +109,9 @@ class ImeService : InputMethodService(),
             when {
                 key == null -> Unit
                 key == KEY_SNIPPETS -> loadSnippets()
+                // 설정 앱에서 '초기화'로 지웠을 때만 리셋(자체 저장은 무시).
+                key == KEY_TYPO_STATS ->
+                    if (prefs.getString(KEY_TYPO_STATS, null) == null) typoTracker.reset()
                 key.startsWith(PROFILE_FOLDED) || key.startsWith(PROFILE_UNFOLDED) -> loadProfile()
             }
         }
@@ -114,6 +123,7 @@ class ImeService : InputMethodService(),
         pinned = prefs.getBoolean(KEY_PINNED, false)
         loadClips()
         loadSnippets()
+        typoTracker.loadJson(prefs.getString(KEY_TYPO_STATS, null))
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
     }
@@ -159,7 +169,10 @@ class ImeService : InputMethodService(),
                     onSnippetRun = ::onSnippetRun,
                     onToggleSelect = { selectActive = !selectActive },
                     // 초성만 있는 상태 → 다음 자모는 모음일 확률이 높다(경계 스냅용).
-                    expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel }
+                    expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel },
+                    onCharTouch = ::onCharTouch,
+                    // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다.
+                    confusionBoost = { from, to -> typoTracker.confusionCount(from, to) >= 10 }
                 )
             }
         }
@@ -243,9 +256,22 @@ class ImeService : InputMethodService(),
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        persistTypoStats()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         super.onFinishInputView(finishingInput)
+    }
+
+    /** 글자 키 터치 지점 기록(키 셀 안 정규화 좌표). 50타마다 저장. */
+    private fun onCharTouch(label: String, fx: Float, fy: Float) {
+        typoTracker.onCharPress(label, fx, fy, SystemClock.uptimeMillis())
+        if (++typoDirty >= 50) persistTypoStats()
+    }
+
+    private fun persistTypoStats() {
+        if (typoDirty == 0) return
+        typoDirty = 0
+        prefs.edit().putString(KEY_TYPO_STATS, typoTracker.toJson()).apply()
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
@@ -399,6 +425,7 @@ class ImeService : InputMethodService(),
             }
 
             ActionType.BACKSPACE -> {
+                typoTracker.onBackspace(SystemClock.uptimeMillis())
                 if (composer.backspace()) {
                     ic.setComposingText(composer.composing, 1)
                 } else {
@@ -434,12 +461,14 @@ class ImeService : InputMethodService(),
             ActionType.UNDO -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_Z)
 
             ActionType.SPACE -> {
+                typoTracker.onOtherInput()
                 commitComposing()
                 ic.commitText(" ", 1)
                 selectActive = false
             }
 
             ActionType.ENTER -> {
+                typoTracker.onOtherInput()
                 commitComposing()
                 selectActive = false
                 if (shifted) {
@@ -520,6 +549,7 @@ class ImeService : InputMethodService(),
 
     /** 조합 중인 글자를 확정하고 방향키(DPAD)로 커서를 옮긴다. Ctrl 조합이면 단어 이동 등. */
     private fun moveCursor(ic: android.view.inputmethod.InputConnection, keyCode: Int) {
+        typoTracker.onOtherInput()
         commitComposing()
         sendKeyWithMeta(ic, keyCode, activeMeta() or selectionMeta())
         clearMods()
@@ -528,6 +558,7 @@ class ImeService : InputMethodService(),
     /** Del/Home/End/PgUp/PgDn 등 하드웨어 키를 (Ctrl/Alt 조합과 함께) 전송. */
     private fun onKeyCodeKey(code: Int) {
         val ic = currentInputConnection ?: return
+        typoTracker.onOtherInput()
         commitComposing()
         // 이동 키에만 선택(Shift)을 싣는다. 그 외(tab/del/esc 등)는 선택 모드를
         // 끄고 평범하게 처리 — del 은 선택영역 삭제, esc 는 선택 취소가 된다.
@@ -636,8 +667,9 @@ class ImeService : InputMethodService(),
         const val KEY_AUX_ROWS = "aux_rows"
         const val KEY_CLIP_HISTORY = "clip_history"
         const val KEY_CLIP_PINNED = "clip_pinned"
-        // MainActivity 스니펫 편집 화면과 공유하는 키.
+        // MainActivity 스니펫 편집/오타 분석 화면과 공유하는 키.
         const val KEY_SNIPPETS = "snippets"
+        const val KEY_TYPO_STATS = "typo_stats"
 
         // 선택(Shift)을 실을 수 있는 커서 이동 키. 그 외 키는 선택 모드를 해제한다.
         val MOVEMENT_CODES = setOf(

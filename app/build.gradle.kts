@@ -69,4 +69,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    // 로컬 단위 테스트에서 android.jar 의 org.json 스텁 대신 실제 구현 사용
+    testImplementation("org.json:json:20240303")
 }

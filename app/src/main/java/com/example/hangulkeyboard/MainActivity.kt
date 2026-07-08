@@ -44,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.hangulkeyboard.ui.AuxRows
 import org.json.JSONArray
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * 키보드 활성화 안내 + 접힘/펼침 프로파일별 설정 + 테스트 입력칸.
@@ -128,6 +130,10 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
 
         SnippetSection(prefs)
 
+        HorizontalDivider()
+
+        TypoStatsSection(prefs)
+
         // ── 테스트 입력칸 ──
         OutlinedTextField(
             value = testText,
@@ -196,6 +202,89 @@ private fun SnippetSection(prefs: SharedPreferences) {
                     save()
                 }) { Text("삭제") }
             }
+        }
+    }
+}
+
+/**
+ * 오타 분석. IME 가 기록한 터치 편향/혼동 쌍 통계를 읽어 보여준다.
+ * (모든 데이터는 이 기기의 SharedPreferences 에만 저장된다.)
+ */
+@Composable
+private fun TypoStatsSection(prefs: SharedPreferences) {
+    var refresh by remember { mutableStateOf(0) }
+    val tracker = remember(refresh) {
+        TypoTracker().apply { loadJson(prefs.getString("typo_stats", null)) }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("오타 분석", fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f))
+            TextButton(onClick = { refresh++ }) { Text("새로고침") }
+            TextButton(onClick = {
+                prefs.edit().remove("typo_stats").apply()
+                refresh++
+            }) { Text("초기화") }
+        }
+
+        if (tracker.taps == 0L) {
+            Text(
+                "아직 데이터가 없습니다. 키보드를 쓰다 보면 글자 키 터치 지점과\n" +
+                    "\"입력→백스페이스→다른 키\" 수정 패턴이 여기에 쌓입니다.",
+                fontSize = 13.sp
+            )
+            return@Column
+        }
+
+        val rate = if (tracker.taps > 0) tracker.corrections * 100.0 / tracker.taps else 0.0
+        Text(
+            "총 입력 ${tracker.taps}타 · 수정 ${tracker.corrections}회 · " +
+                "오타율 ${"%.1f".format(rate)}%",
+            fontSize = 14.sp
+        )
+
+        val topConfusions = tracker.confusion.entries.sortedByDescending { it.value }.take(8)
+        if (topConfusions.isNotEmpty()) {
+            Text("자주 헷갈리는 키 (지운 키 → 다시 누른 키)", fontSize = 14.sp,
+                fontWeight = FontWeight.Bold)
+            topConfusions.forEach { (pair, count) ->
+                val (from, to) = pair.split(">").let { it[0] to it.getOrElse(1) { "?" } }
+                Text("· $from → $to  ${count}회", fontSize = 14.sp)
+            }
+            Text(
+                "10회 이상 쌓인 인접 경계는 키보드가 스냅 폭을 자동으로 넓힙니다.",
+                fontSize = 12.sp
+            )
+        }
+
+        // 표본 30개 이상, 중심에서 8% 이상 치우친 키만 보여준다.
+        val biased = tracker.offsets.entries
+            .filter { it.value[2] >= 30f }
+            .map { (label, v) ->
+                Triple(label, v[0] / v[2], v[1] / v[2])
+            }
+            .filter { abs(it.second) >= 0.08f || abs(it.third) >= 0.08f }
+            .sortedByDescending { abs(it.second) + abs(it.third) }
+            .take(6)
+        if (biased.isNotEmpty()) {
+            Text("터치 편향 (키 중심 대비, 표본 30타 이상)", fontSize = 14.sp,
+                fontWeight = FontWeight.Bold)
+            biased.forEach { (label, dx, dy) ->
+                val h = if (dx >= 0) "오른쪽" else "왼쪽"
+                val v = if (dy >= 0) "아래" else "위"
+                Text(
+                    "· $label: $h ${abs(dx * 100).roundToInt()}% · $v ${abs(dy * 100).roundToInt()}%",
+                    fontSize = 14.sp
+                )
+            }
+            Text(
+                "아래쪽 편향이 크면 터치 Y 오프셋 보정(다음 단계)이 효과적입니다.",
+                fontSize = 12.sp
+            )
         }
     }
 }
