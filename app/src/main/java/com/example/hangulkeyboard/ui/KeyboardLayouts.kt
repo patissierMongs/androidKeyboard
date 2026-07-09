@@ -72,48 +72,49 @@ object KeyboardLayouts {
         AuxRows.NONE -> emptyList()
     }
 
-    // 기호 자판 — numpad 특화. 오른쪽 4열이 계산기식 numpad(7 8 9 / · 4 5 6 * ·
-    // 1 2 3 0)로 0 이 숫자 바로 옆에 붙는다. 왼쪽엔 자주 쓰는 기호, 나머지는
-    // Shift 층(SYMBOL_SHIFT)으로. 보조줄은 글자 자판과 같은 터미널 기능줄만 써서
-    // 📋·✂ 위치가 글자 자판과 동일하다. ⌫ 는 액션줄로 뺐다.
-    private fun symbolsMain(bottomArrows: Boolean): List<List<Key>> = listOf(
-        charKeys("( ) [ ] { } 7 8 9 /"),
-        charKeys("! @ # $ % ? 4 5 6 *"),
-        // ⇧ + 기호 5칸 + numpad(1 2 3 0). 모두 폭 1 로 열이 정렬된다.
+    // 기호 자판 — 풀 키보드 numpad 그대로. 오른쪽 열이 연산자 / * - 이고,
+    // 맨 아래(액션줄)에 0 . ↵(numpad Enter)가 온다:
+    //   7 8 9 /
+    //   4 5 6 *
+    //   1 2 3 -
+    //       0 . ↵
+    // 왼쪽엔 자주 쓰는 기호, 나머지는 Shift 층(SYMBOL_SHIFT). 보조줄은 글자
+    // 자판과 같은 터미널 기능줄만 써서 📋·✂ 위치가 통일된다.
+    private fun symbolsMain(): List<List<Key>> = listOf(
+        charKeys("! @ # $ % ^ 7 8 9 /"),
+        charKeys("& * ( ) - _ 4 5 6 *"),
+        // ⇧ + 기호 5칸 + numpad(1 2 3 -). 모두 폭 1 로 열이 정렬된다.
         listOf<Key>(Key.Action(ActionType.SHIFT, "⇧", weight = 1f)) +
-            charKeys("& - _ : =") + charKeys("1 2 3 0"),
-        symActionRow(bottomArrows)
+            charKeys("= + [ ] {") + charKeys("1 2 3 -"),
+        symActionRow()
     )
 
-    // 기호 자판 액션줄. 분할이면 방향키 자리에 < > ^ | 를, ⌫·↵ 포함.
-    private fun symActionRow(bottomArrows: Boolean): List<Key> = listOf(
+    // 기호 자판 액션줄. 오른쪽에 numpad 하단 0 . ↵ 를 두어 아래 열과 맞춘다.
+    private fun symActionRow(): List<Key> = listOf(
         Key.Action(ActionType.CTRL, "ctrl"),
         Key.Action(ActionType.SYMBOLS, "?123"),
         Key.Action(ActionType.LANGUAGE, "한/A"),
-        if (bottomArrows) Key.Action(ActionType.LEFT, "◀") else Key.Char("<"),
-        Key.Action(ActionType.SPACE, "", weight = 1.5f),
-        if (bottomArrows) Key.Action(ActionType.UP, "▲") else Key.Char(">"),
-        if (bottomArrows) Key.Action(ActionType.DOWN, "▼") else Key.Char("^"),
         Key.Action(ActionType.COMMA, ","),
-        Key.Action(ActionType.PERIOD, "."),
-        Key.Action(ActionType.SPACE, "", weight = 1.5f),
-        if (bottomArrows) Key.Action(ActionType.RIGHT, "▶") else Key.Char("|"),
-        Key.Action(ActionType.BACKSPACE, "⌫"),
-        Key.Action(ActionType.ENTER, "↵")
+        Key.Action(ActionType.BACKSPACE, "⌫", weight = 1.5f),
+        Key.Action(ActionType.SPACE, "", weight = 2f),
+        Key.Char("0", weight = 2f),   // numpad 0 (숫자 아래, 넓게)
+        Key.Char("."),
+        Key.Action(ActionType.ENTER, "↵", weight = 1.5f)   // numpad Enter
     )
 
     fun symbols(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
-        symbolsAuxFor(aux) + symbolsMain(bottomArrows)
+        symbolsAuxFor(aux) + symbolsMain()
 
     // 기호 자판 보조줄: 글자 자판과 동일한 터미널 기능줄만(📋·✂ 위치 통일).
     // 희소·확장 기호줄은 제거 — 잘 안 쓰는 기호는 Shift 층으로.
     private fun symbolsAuxFor(aux: AuxRows): List<List<Key>> =
         if (aux == AuxRows.NONE) emptyList() else listOf(terminalRow())
 
-    // Shift 로 얻는 나머지 기호. 자주 쓰는 건 이미 무시프트로 배치돼 있다.
+    // Shift 로 얻는 나머지 기호(무시프트에 없는 것 전부). 자주 쓰는 건 무시프트로.
     private val SYMBOL_SHIFT = mapOf(
-        "!" to "~", "@" to "`", "#" to "+", "$" to "\\",
-        "%" to ";", "?" to "'", "&" to "\""
+        "!" to "~", "@" to "`", "#" to "|", "$" to "\\",
+        "%" to "<", "^" to ">", "&" to ";", "*" to ":",
+        "(" to "'", ")" to "\"", "=" to "?", "[" to "}"
     )
 
     /** 기호 자판 시프트: SYMBOL_SHIFT 쌍만 치환(numpad 숫자는 그대로). weight 유지. */
