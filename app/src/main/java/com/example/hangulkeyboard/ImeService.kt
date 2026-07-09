@@ -279,12 +279,13 @@ class ImeService : InputMethodService(),
         shiftState = ShiftState.OFF
         ctrlState = ShiftState.OFF
         selectActive = false
-        // 숫자/전화 입력칸이면 기호 자판으로 시작
+        // 입력칸이 뜰 때마다 기본은 한글 자판(마지막 자판을 유지하지 않는다).
+        mode = KeyboardMode.KOREAN
+        previousMode = KeyboardMode.KOREAN
+        // 숫자/전화 입력칸이면 기호 자판으로 시작(?123 토글은 한글로 돌아온다).
         attribute?.let {
             val cls = it.inputType and InputType.TYPE_MASK_CLASS
             if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE) {
-                // ?123 토글로 돌아갈 자판을 기억해 둔다(이전 previousMode 오염 방지).
-                if (mode != KeyboardMode.SYMBOLS) previousMode = mode
                 mode = KeyboardMode.SYMBOLS
             }
         }
@@ -508,8 +509,9 @@ class ImeService : InputMethodService(),
 
             ActionType.LANGUAGE -> {
                 commitComposing()
-                mode = if (mode == KeyboardMode.ENGLISH) KeyboardMode.KOREAN
-                else KeyboardMode.ENGLISH
+                // 한글에서만 영문으로, 그 외(영문·기호)에서는 한글로 온다.
+                mode = if (mode == KeyboardMode.KOREAN) KeyboardMode.ENGLISH
+                else KeyboardMode.KOREAN
                 shiftState = ShiftState.OFF
             }
 
@@ -608,15 +610,48 @@ class ImeService : InputMethodService(),
         altActive = false
     }
 
-    /** keyCode 를 (선택적 meta 와 함께) 실제 하드웨어 키 이벤트로 전송. 원격에서도 동작. */
+    /**
+     * keyCode 를 (선택적 meta 와 함께) 실제 하드웨어 키 이벤트로 전송.
+     *
+     * 원격 데스크톱(RDP/Parsec 등)은 단일 키 이벤트에 실린 meta 비트만으로는
+     * Ctrl/Alt/Shift 를 '눌린 상태'로 보지 못한다. 그래서 모디파이어를 실제
+     * 키 DOWN 으로 먼저 누르고 → 대상 키 down/up → 모디파이어를 역순으로 UP
+     * 하는 정식 시퀀스로 보낸다. 로컬 입력칸에서도 동일하게 동작한다.
+     */
     private fun sendKeyWithMeta(
         ic: android.view.inputmethod.InputConnection,
         keyCode: Int,
         meta: Int,
     ) {
-        val now = SystemClock.uptimeMillis()
-        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, meta))
-        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, meta))
+        val t = SystemClock.uptimeMillis()
+        fun send(action: Int, code: Int, m: Int) =
+            ic.sendKeyEvent(KeyEvent(t, t, action, code, 0, m))
+
+        // 눌러야 할 모디파이어(키코드, meta 비트) 목록. 누른 순서대로 meta 를 쌓는다.
+        val mods = buildList {
+            if (meta and KeyEvent.META_CTRL_ON != 0)
+                add(KeyEvent.KEYCODE_CTRL_LEFT to (KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON))
+            if (meta and KeyEvent.META_ALT_ON != 0)
+                add(KeyEvent.KEYCODE_ALT_LEFT to (KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON))
+            if (meta and KeyEvent.META_SHIFT_ON != 0)
+                add(KeyEvent.KEYCODE_SHIFT_LEFT to (KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+        }
+        if (mods.isEmpty()) {
+            send(KeyEvent.ACTION_DOWN, keyCode, 0)
+            send(KeyEvent.ACTION_UP, keyCode, 0)
+            return
+        }
+        var acc = 0
+        for ((code, bit) in mods) {
+            acc = acc or bit
+            send(KeyEvent.ACTION_DOWN, code, acc)   // 모디파이어 누름
+        }
+        send(KeyEvent.ACTION_DOWN, keyCode, acc)    // 대상 키
+        send(KeyEvent.ACTION_UP, keyCode, acc)
+        for ((code, bit) in mods.asReversed()) {
+            acc = acc and bit.inv()
+            send(KeyEvent.ACTION_UP, code, acc)     // 모디파이어 뗌(역순)
+        }
     }
 
     /** 문자를 Ctrl/Alt 조합에 쓸 하드웨어 keyCode 로 매핑(영문/숫자만). */
