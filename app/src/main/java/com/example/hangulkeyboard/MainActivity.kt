@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.hangulkeyboard.ui.AuxRows
+import com.example.hangulkeyboard.ui.LayoutConfig
 import org.json.JSONArray
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -129,6 +130,10 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
         HorizontalDivider()
 
         SnippetSection(prefs)
+
+        HorizontalDivider()
+
+        LayoutSection(prefs)
 
         HorizontalDivider()
 
@@ -219,6 +224,75 @@ private fun SnippetSection(prefs: SharedPreferences) {
                 }) { Text("삭제") }
             }
         }
+    }
+}
+
+/**
+ * 레이아웃 편집. 브라우저의 Artifact 에디터에서 만든 JSON 을 붙여넣어 적용한다.
+ * '기본값 불러오기'로 현재 배열을 텍스트로 꺼내 편집 시작점으로 쓸 수 있다.
+ */
+@Composable
+private fun LayoutSection(prefs: SharedPreferences) {
+    val context = LocalContext.current
+    val clipboard = remember {
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    }
+    var text by remember { mutableStateOf(prefs.getString("custom_layout", "") ?: "") }
+    var status by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("레이아웃 편집", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "브라우저 에디터에서 레이아웃 JSON 을 만들어 아래에 붙여넣고 ‘적용’.\n" +
+                "‘기본값 불러오기’로 현재 배열을 꺼내 편집 시작점으로 쓸 수 있습니다.",
+            fontSize = 13.sp
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text("레이아웃 JSON") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            maxLines = 8
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val json = text.trim()
+                if (json.isEmpty()) {
+                    prefs.edit().remove("custom_layout").apply()
+                    status = "커스텀 해제 — 기본 배열로."
+                } else if (LayoutConfig.parse(json).isEmpty()) {
+                    status = "JSON 을 읽지 못했습니다. 형식을 확인하세요."
+                } else {
+                    prefs.edit().putString("custom_layout", json).apply()
+                    status = "적용됨. 키보드를 다시 열면 반영됩니다."
+                }
+            }) { Text("적용") }
+            Button(onClick = {
+                text = LayoutConfig.defaultJson()
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("layout", text)
+                )
+                status = "기본 배열을 넣고 클립보드에도 복사했습니다."
+            }) { Text("기본값 불러오기") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("layout", text)
+                )
+                status = "클립보드에 복사했습니다."
+            }) { Text("복사") }
+            TextButton(onClick = {
+                text = ""
+                prefs.edit().remove("custom_layout").apply()
+                status = "커스텀 해제 — 기본 배열로."
+            }) { Text("기본으로 초기화") }
+        }
+        if (status.isNotEmpty()) Text(status, fontSize = 12.sp)
     }
 }
 

@@ -136,12 +136,14 @@ fun KeyboardView(
     onCharTouch: (String, Float, Float) -> Unit = { _, _, _ -> },
     // 실측 혼동이 잦은 경계는 스냅 폭을 넓힌다.
     confusionBoost: (String, String) -> Boolean = { _, _ -> false },
+    // 사용자 커스텀 레이아웃(있으면 기본 배열 대신). 모드별 행 목록.
+    customRows: Map<KeyboardMode, List<List<Key>>> = emptyMap(),
 ) {
     val shifted = shiftState != ShiftState.OFF
     // 분할이면 액션줄 방향키를 빼고 특수문자를 둔다(가운데 미니 방향키가 대신함).
     val bottomArrows = splitGap <= 0f
-    val rows = remember(mode, shifted, auxRows, bottomArrows) {
-        resolveRows(mode, shifted, auxRows, bottomArrows)
+    val rows = remember(mode, shifted, auxRows, bottomArrows, customRows) {
+        resolveRows(mode, shifted, auxRows, bottomArrows, customRows[mode])
     }
     // 상단 보조줄(터미널/특수문자/숫자)은 낮게 둔다. 모든 자판이 보조줄 + 4줄
     // 골격을 공유하므로 앞쪽 초과분이 곧 보조줄이다.
@@ -844,8 +846,11 @@ private fun resolveRows(
     shifted: Boolean,
     aux: AuxRows,
     bottomArrows: Boolean,
+    custom: List<List<Key>>?,
 ): List<List<Key>> {
-    val base = when (mode) {
+    // 커스텀 레이아웃이 있으면 그 행을 그대로 쓰되, 시프트 변환은 엔진 것을 재사용
+    // (라벨 기반이라 커스텀 배열에도 그대로 적용된다).
+    val base = custom ?: when (mode) {
         KeyboardMode.KOREAN -> KeyboardLayouts.korean(aux, bottomArrows)
         KeyboardMode.ENGLISH -> KeyboardLayouts.english(aux, bottomArrows)
         KeyboardMode.SYMBOLS -> KeyboardLayouts.symbols(aux, bottomArrows)

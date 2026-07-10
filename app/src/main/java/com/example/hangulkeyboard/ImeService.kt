@@ -33,7 +33,9 @@ import com.example.hangulkeyboard.ui.CenterMode
 import com.example.hangulkeyboard.ui.Key
 import com.example.hangulkeyboard.ui.KeyboardMode
 import com.example.hangulkeyboard.ui.KeyboardView
+import com.example.hangulkeyboard.ui.LayoutConfig
 import com.example.hangulkeyboard.ui.ShiftState
+import androidx.compose.runtime.mutableStateMapOf
 import org.json.JSONArray
 
 /**
@@ -99,6 +101,9 @@ class ImeService : InputMethodService(),
     // 경계는 스냅 폭을 자동으로 넓힌다.
     private val typoTracker = TypoTracker()
     private var typoDirty = 0
+
+    // 사용자 커스텀 레이아웃(설정 앱에서 JSON 붙여넣기). 비어 있으면 기본 배열.
+    private val customLayout = mutableStateMapOf<KeyboardMode, List<List<Key>>>()
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
     // 설정 앱에서 값을 바꾸면 키보드를 다시 열지 않아도 즉시 반영한다.
@@ -108,6 +113,7 @@ class ImeService : InputMethodService(),
             when {
                 key == null -> Unit
                 key == KEY_SNIPPETS -> loadSnippets()
+                key == KEY_CUSTOM_LAYOUT -> loadCustomLayout()
                 // 설정 앱에서 '초기화'로 지웠을 때만 리셋(자체 저장은 무시).
                 key == KEY_TYPO_STATS ->
                     if (prefs.getString(KEY_TYPO_STATS, null) == null) typoTracker.reset()
@@ -123,6 +129,7 @@ class ImeService : InputMethodService(),
         loadClips()
         loadSnippets()
         migrateLegacyPins()
+        loadCustomLayout()
         typoTracker.loadJson(prefs.getString(KEY_TYPO_STATS, null))
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
@@ -171,7 +178,8 @@ class ImeService : InputMethodService(),
                     expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel },
                     onCharTouch = ::onCharTouch,
                     // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다.
-                    confusionBoost = { from, to -> typoTracker.confusionCount(from, to) >= 10 }
+                    confusionBoost = { from, to -> typoTracker.confusionCount(from, to) >= 10 },
+                    customRows = customLayout
                 )
             }
         }
@@ -372,6 +380,12 @@ class ImeService : InputMethodService(),
     private fun loadSnippets() {
         snippets.clear()
         snippets.addAll(readStringList(KEY_SNIPPETS))
+    }
+
+    /** 커스텀 레이아웃 JSON 을 (재)로드한다. 없거나 파싱 실패하면 기본 배열로. */
+    private fun loadCustomLayout() {
+        customLayout.clear()
+        customLayout.putAll(LayoutConfig.parse(prefs.getString(KEY_CUSTOM_LAYOUT, null)))
     }
 
     // ---- 입력 처리 ----
@@ -719,9 +733,10 @@ class ImeService : InputMethodService(),
         const val KEY_AUX_ROWS = "aux_rows"
         const val KEY_CLIP_HISTORY = "clip_history"
         const val KEY_CLIP_PINNED = "clip_pinned"
-        // MainActivity 스니펫 편집/오타 분석 화면과 공유하는 키.
+        // MainActivity 스니펫 편집/오타 분석/레이아웃 편집 화면과 공유하는 키.
         const val KEY_SNIPPETS = "snippets"
         const val KEY_TYPO_STATS = "typo_stats"
+        const val KEY_CUSTOM_LAYOUT = "custom_layout"
 
         // 선택(Shift)을 실을 수 있는 커서 이동 키. 그 외 키는 선택 모드를 해제한다.
         val MOVEMENT_CODES = setOf(
