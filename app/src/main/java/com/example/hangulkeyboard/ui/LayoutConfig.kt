@@ -10,17 +10,22 @@ import org.json.JSONObject
  * 앱은 이 JSON 이 있으면 그 배열로 키보드를 그리고, 없으면 [KeyboardLayouts]
  * 기본 배열을 쓴다. 시프트·분할·조합 같은 동작은 그대로 엔진(코드)에 남는다.
  *
- * JSON 형태 — 펼침/접힘 프로파일별로 한글/영문/기호 배열을 담는다:
+ * JSON 형태 — 펼침/접힘 프로파일별. 권장은 '프레임' 형식(물리 키보드처럼 하나의
+ * 격자에 슬롯마다 한글/영문/기호 값을 함께 둔다. 레이어를 바꿔도 키가 안 움직임):
  * {
- *   "unfolded": { "korean":[[row],...], "english":[...], "symbols":[...] },
- *   "folded":   { "korean":[...], ... }
+ *   "unfolded": { "frame": [ [slot, slot, ...], ... ] },
+ *   "folded":   { "frame": [ ... ] }
  * }
- * (예전처럼 최상단에 바로 korean/english/symbols 만 있으면 두 프로파일 공용으로 본다.)
- * 각 row 는 키 항목의 배열. 키 항목은:
- *   "ㅂ"                             일반 문자(라벨=출력, 폭 1)
- *   {"k":"ㅂ","out":"ㅂ","w":1.25}   문자(출력·폭 지정)
- *   {"act":"SHIFT","l":"⇧","w":1.5}  기능 키(ActionType 이름)
- *   {"code":"TAB","l":"tab"}         하드웨어 키(아래 CODE_NAMES)
+ * 프레임의 슬롯은:
+ *   {"kor":"ㅂ","eng":"q","sym":"!","w":1.25}   레이어별 값 + 폭(글자 슬롯)
+ *   {"k":"+"}                                   세 레이어 모두 같은 문자
+ *   "+"                                         위와 동일(문자열 축약)
+ *   {"act":"SHIFT","l":"⇧","w":1.5}             기능 키(모든 레이어 공통)
+ *   {"code":"TAB","l":"tab"}                    하드웨어 키
+ *
+ * (호환) 프레임 대신 모드별 배열도 받는다:
+ *   { "unfolded": { "korean":[...], "english":[...], "symbols":[...] }, ... }
+ *   또는 최상단에 바로 korean/english/symbols (두 프로파일 공용).
  */
 object LayoutConfig {
 
@@ -72,6 +77,8 @@ object LayoutConfig {
     }
 
     private fun parseModes(obj: JSONObject): Map<KeyboardMode, List<List<Key>>> {
+        // 프레임 형식 우선(슬롯당 레이어별 값). 없으면 모드별 배열(호환).
+        obj.optJSONArray("frame")?.let { return parseFrame(it) }
         val out = mutableMapOf<KeyboardMode, List<List<Key>>>()
         for ((mode, key) in MODE_KEYS) {
             val rowsJson = obj.optJSONArray(key) ?: continue
@@ -81,6 +88,37 @@ object LayoutConfig {
                 ?.let { out[mode] = it }
         }
         return out
+    }
+
+    /** 프레임(슬롯당 한/영/기호 값) → 모드별 행으로 투영한다. */
+    private fun parseFrame(frame: JSONArray): Map<KeyboardMode, List<List<Key>>> {
+        val kor = ArrayList<List<Key>>(); val eng = ArrayList<List<Key>>(); val sym = ArrayList<List<Key>>()
+        for (r in 0 until frame.length()) {
+            val row = frame.getJSONArray(r)
+            val kr = ArrayList<Key>(); val er = ArrayList<Key>(); val sr = ArrayList<Key>()
+            for (c in 0 until row.length()) {
+                val item = row.get(c)
+                if (item is JSONObject && (item.has("act") || item.has("code"))) {
+                    val k = parseKey(item)   // 기능 키: 모든 레이어 공통
+                    kr.add(k); er.add(k); sr.add(k)
+                } else {
+                    val w: Float
+                    val vk: String; val ve: String; val vs: String
+                    if (item is JSONObject && (item.has("kor") || item.has("eng") || item.has("sym"))) {
+                        vk = item.optString("kor", ""); ve = item.optString("eng", ""); vs = item.optString("sym", "")
+                        w = item.optDouble("w", 1.0).toFloat()
+                    } else {
+                        // {"k":"+"} 또는 "+" — 세 레이어 동일
+                        val v = if (item is JSONObject) item.optString("k", "") else item.toString()
+                        vk = v; ve = v; vs = v
+                        w = if (item is JSONObject) item.optDouble("w", 1.0).toFloat() else 1f
+                    }
+                    kr.add(Key.Char(vk, vk, w)); er.add(Key.Char(ve, ve, w)); sr.add(Key.Char(vs, vs, w))
+                }
+            }
+            kor.add(kr); eng.add(er); sym.add(sr)
+        }
+        return mapOf(KeyboardMode.KOREAN to kor, KeyboardMode.ENGLISH to eng, KeyboardMode.SYMBOLS to sym)
     }
 
     private fun parseRows(rows: JSONArray): List<List<Key>> =
@@ -142,18 +180,35 @@ object LayoutConfig {
     }
 
     /**
-     * 기본 배열(현재 코드)을 프로파일별 JSON 으로 — 편집기 시작점.
-     * 펼침=보조줄 전체, 접힘=터미널 기능줄만(앱 프로파일 기본값과 동일). 분할 전 기준.
+     * 기본 배열(현재 코드)을 프레임 형식 JSON 으로 — 편집기 시작점.
+     * 세 모드가 같은 격자라, 각 자리를 겹쳐 슬롯(한/영/기호 값)으로 되돌린다.
+     * 펼침=보조줄 전체, 접힘=터미널 기능줄만. 분할 전(bottomArrows=true) 기준.
      */
     fun defaultJson(): String {
-        fun modes(aux: AuxRows) = mapOf(
-            KeyboardMode.KOREAN to KeyboardLayouts.korean(aux, bottomArrows = true),
-            KeyboardMode.ENGLISH to KeyboardLayouts.english(aux, bottomArrows = true),
-            KeyboardMode.SYMBOLS to KeyboardLayouts.symbols(aux, bottomArrows = true),
-        )
+        fun frameObj(aux: AuxRows): JSONObject {
+            val kor = KeyboardLayouts.korean(aux, bottomArrows = true)
+            val eng = KeyboardLayouts.english(aux, bottomArrows = true)
+            val sym = KeyboardLayouts.symbols(aux, bottomArrows = true)
+            val frame = JSONArray()
+            for (r in kor.indices) {
+                val row = JSONArray()
+                for (c in kor[r].indices) {
+                    val k = kor[r][c]
+                    if (k is Key.Char) {
+                        val e = (eng[r][c] as? Key.Char)?.output ?: k.output
+                        val s = (sym[r][c] as? Key.Char)?.output ?: k.output
+                        val slot = JSONObject().put("kor", k.output).put("eng", e).put("sym", s)
+                        if (k.weight != 1f) slot.put("w", k.weight.toDouble())
+                        row.put(slot)
+                    } else row.put(keyToJson(k))
+                }
+                frame.put(row)
+            }
+            return JSONObject().put("frame", frame)
+        }
         return JSONObject()
-            .put("unfolded", modesToJson(modes(AuxRows.ALL)))
-            .put("folded", modesToJson(modes(AuxRows.TERMINAL)))
+            .put("unfolded", frameObj(AuxRows.ALL))
+            .put("folded", frameObj(AuxRows.TERMINAL))
             .toString(2)
     }
 }
