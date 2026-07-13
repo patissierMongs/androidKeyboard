@@ -118,6 +118,7 @@ fun KeyboardView(
     ctrlState: ShiftState,
     altActive: Boolean,
     splitGap: Float,
+    splitRatio: Float,
     keyHeight: Float,
     auxRows: AuxRows,
     clips: List<String>,
@@ -184,7 +185,7 @@ fun KeyboardView(
                     val compact = index < compactCount
                     // 분할: 줄 가운데(weight 절반 지점)에 공백을 끼운다. 키 폭은 그대로,
                     // 공백에 붙은 안쪽 키만 살짝 넓힌다(ㅅ·ㅛ 오터치 보정).
-                    val rowKeys = if (splitGap > 0f) splitWithGap(keys, splitGap) else keys
+                    val rowKeys = if (splitGap > 0f) splitWithGap(keys, splitGap, splitRatio) else keys
                     KeyRow(
                         keys = rowKeys,
                         compact = compact,
@@ -232,14 +233,16 @@ fun KeyboardView(
  * 동률이면 뒤쪽 지점을 택해 왼손 글쇠(ㅎ·ㅍ, g 등)가 왼쪽 블록에 남게 한다.
  * 공백에 붙은 안쪽 글자 키(ㅅ·ㅛ 등)는 +0.25 넓혀 오터치를 줄인다.
  */
-private fun splitWithGap(keys: List<Key>, gap: Float): List<Key> {
+private fun splitWithGap(keys: List<Key>, gap: Float, ratio: Float): List<Key> {
     val total = keys.sumOf { keyWeight(it).toDouble() }
+    // 분할 지점 = 줄 폭의 [ratio] 비율에 가장 가까운 키 경계. 0.5 면 가운데.
+    val target = total * ratio.coerceIn(0.1f, 0.9f)
     var best = 1
     var bestDiff = Double.MAX_VALUE
     var acc = 0.0
     for (i in 0 until keys.size - 1) {
         acc += keyWeight(keys[i])
-        val diff = abs(acc - total / 2)
+        val diff = abs(acc - target)
         if (diff <= bestDiff) {
             bestDiff = diff
             best = i + 1

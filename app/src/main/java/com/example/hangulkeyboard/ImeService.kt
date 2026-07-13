@@ -76,6 +76,8 @@ class ImeService : InputMethodService(),
     private var altActive by mutableStateOf(false)
     // 분할 키보드 가운데 공백 폭(키 폭 단위). 0 이면 분할 안 함. 앱에서 조절.
     private var splitGap by mutableStateOf(0f)
+    // 분할 지점 비율(0.5 = 줄 가운데). 앱에서 조절.
+    private var splitRatio by mutableStateOf(0.5f)
     // 접힘/펼침 프로파일별 레이아웃: 상단 보조줄 범위, 키 높이(dp).
     private var auxRows by mutableStateOf(AuxRows.ALL)
     private var keyHeight by mutableStateOf(52f)
@@ -168,6 +170,7 @@ class ImeService : InputMethodService(),
                     ctrlState = ctrlState,
                     altActive = altActive,
                     splitGap = splitGap,
+                    splitRatio = splitRatio,
                     keyHeight = keyHeight,
                     auxRows = auxRows,
                     clips = clipHistory,
@@ -198,8 +201,12 @@ class ImeService : InputMethodService(),
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         applyPinDisposition()
-        // 접힘/펼침에 맞는 프로파일 설정을 반영(키보드가 뜰 때마다 최신값 반영).
+        // 키보드가 뜰 때마다 설정 앱이 저장한 최신값을 다시 읽는다.
+        // (prefs 변경 리스너가 프로세스·타이밍에 따라 안 먹을 수 있어, 열 때마다
+        //  확실히 재로드해 '다시 열면 반영'이 항상 동작하게 한다.)
         loadProfile()
+        loadCustomLayout()
+        loadSnippets()
         // 현재 클립보드 내용을 히스토리에 반영(변경 이벤트가 없어도 최신값 확보).
         captureClip()
     }
@@ -213,6 +220,7 @@ class ImeService : InputMethodService(),
         foldedProfile = folded
         val p = if (folded) PROFILE_FOLDED else PROFILE_UNFOLDED
         splitGap = prefs.getFloat(p + KEY_SPLIT_GAP, if (folded) 0f else 2f)
+        splitRatio = prefs.getFloat(p + KEY_SPLIT_RATIO, 0.5f)
         keyHeight = prefs.getFloat(p + KEY_KEY_HEIGHT, if (folded) 56f else 52f)
         auxRows = runCatching {
             AuxRows.valueOf(prefs.getString(p + KEY_AUX_ROWS, null) ?: "")
@@ -755,6 +763,7 @@ class ImeService : InputMethodService(),
         const val PROFILE_FOLDED = "folded_"
         const val PROFILE_UNFOLDED = "unfolded_"
         const val KEY_SPLIT_GAP = "split_gap"
+        const val KEY_SPLIT_RATIO = "split_ratio"
         const val KEY_KEY_HEIGHT = "key_height"
         const val KEY_AUX_ROWS = "aux_rows"
         const val KEY_CLIP_HISTORY = "clip_history"

@@ -8,8 +8,11 @@ import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -43,7 +48,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.hangulkeyboard.ui.AuxRows
+import com.example.hangulkeyboard.ui.CenterMode
+import com.example.hangulkeyboard.ui.Key
+import com.example.hangulkeyboard.ui.KeyboardMode
+import com.example.hangulkeyboard.ui.KeyboardView
 import com.example.hangulkeyboard.ui.LayoutConfig
+import com.example.hangulkeyboard.ui.ShiftState
 import org.json.JSONArray
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -379,6 +389,57 @@ private fun TypoStatsSection(prefs: SharedPreferences) {
     }
 }
 
+/**
+ * 실제 키보드를 축소해 보여주는 미리보기. 가운데 초록 세로선이 분할 지점이다.
+ * 슬라이더(분할 간격·위치)를 움직이면 선과 배치가 바로 바뀐다.
+ */
+@Composable
+private fun SplitPreview(
+    mode: KeyboardMode,
+    splitGap: Float,
+    splitRatio: Float,
+    keyHeight: Float,
+    auxRows: AuxRows,
+    custom: Map<KeyboardMode, List<List<Key>>>,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0x33888888), RoundedCornerShape(8.dp))
+    ) {
+        KeyboardView(
+            mode = mode,
+            shiftState = ShiftState.OFF,
+            ctrlState = ShiftState.OFF,
+            altActive = false,
+            splitGap = splitGap,
+            splitRatio = splitRatio,
+            keyHeight = (keyHeight * 0.7f),   // 미리보기는 살짝 작게
+            auxRows = auxRows,
+            clips = emptyList(),
+            snippets = emptyList(),
+            centerMode = CenterMode.CURSOR,
+            selectActive = false,
+            clipInStrip = false,
+            onKey = {}, onKeyLong = {}, onPaste = {},
+            onClipLong = {}, onSnippetLong = {}, onToggleSelect = {},
+            customRows = custom,
+        )
+        // 분할 지점 표시선: 줄이 나뉘는 대략적 가로 위치(splitRatio)에 세로선.
+        if (splitGap > 0f) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val x = size.width * splitRatio
+                drawLine(
+                    color = Color(0xFF4CAF50),
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
+                    strokeWidth = 3f
+                )
+            }
+        }
+    }
+}
+
 /** 접힘/펼침 한쪽 프로파일의 설정 묶음. 키는 [prefix] 를 붙여 저장한다. */
 @Composable
 private fun ProfileSection(
@@ -390,12 +451,17 @@ private fun ProfileSection(
     defaultAux: AuxRows,
 ) {
     var split by remember { mutableFloatStateOf(prefs.getFloat(prefix + "split_gap", defaultSplit)) }
+    var ratio by remember { mutableFloatStateOf(prefs.getFloat(prefix + "split_ratio", 0.5f)) }
     var height by remember { mutableFloatStateOf(prefs.getFloat(prefix + "key_height", defaultHeight)) }
     var aux by remember {
         mutableStateOf(
             runCatching { AuxRows.valueOf(prefs.getString(prefix + "aux_rows", null) ?: "") }
                 .getOrDefault(defaultAux)
         )
+    }
+    // 이 프로파일의 커스텀 배열(미리보기용). 없으면 기본 배열.
+    val custom = remember {
+        LayoutConfig.parse(prefs.getString("custom_layout", null)).forFolded(prefix == "folded_")
     }
 
     Column(
@@ -413,6 +479,30 @@ private fun ProfileSection(
             },
             valueRange = 0f..4f,
             modifier = Modifier.fillMaxWidth()
+        )
+
+        if (split > 0f) {
+            val pct = (ratio * 100).roundToInt()
+            Text("분할 위치: 왼쪽 $pct% 지점 (아래 미리보기의 초록 선)", fontSize = 14.sp)
+            Slider(
+                value = ratio,
+                onValueChange = { ratio = it },
+                onValueChangeFinished = {
+                    prefs.edit().putFloat(prefix + "split_ratio", ratio).apply()
+                },
+                valueRange = 0.2f..0.8f,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // ── 실시간 미리보기 ── 슬라이더를 움직이면 분할 지점(초록 세로선)이 바로 이동.
+        SplitPreview(
+            mode = KeyboardMode.KOREAN,
+            splitGap = split,
+            splitRatio = ratio,
+            keyHeight = height,
+            auxRows = aux,
+            custom = custom,
         )
 
         Text("키 높이: ${"%.0f".format(height)} dp", fontSize = 14.sp)
