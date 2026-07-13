@@ -69,23 +69,28 @@ object KeyboardLayouts {
         )
     }
 
-    // 글자 3줄 — 두벌식/QWERTY 위치에 기호 레이어를 얹었다. 폭은 프레임에 고정이라
-    // 한/영/기호 어느 레이어에서도 키가 움직이지 않는다.
+    // 글자 3줄 — 두벌식/QWERTY 위치. 폭은 프레임에 고정이라 어느 레이어에서도 키가
+    // 안 움직인다. 기호 레이어의 값은 오른쪽 3열이 숫자줄(7 8 9) 아래로 4 5 6 / 1 2 3
+    // 이 되도록 매핑해, 같은 격자 위에 numpad 가 자연히 떠오르게 했다:
+    //   숫자줄 …  7 8 9 0
+    //   윗줄   …  4 5 6 /   (기호)
+    //   홈줄   …  1 2 3     (기호)
+    //   아랫줄 …  0 .       (기호)
     private val LETTER_ROWS: List<List<Slot>> = listOf(
         listOf(
             ch("ㅂ", "q", "!", 1.25f), ch("ㅈ", "w", "@"), ch("ㄷ", "e", "#"), ch("ㄱ", "r", "$"),
-            ch("ㅅ", "t", "%"), ch("ㅛ", "y", "^"), ch("ㅕ", "u", "&"), ch("ㅑ", "i", "*"),
-            ch("ㅐ", "o", "("), ch("ㅔ", "p", ")", 1.25f)
+            ch("ㅅ", "t", "%"), ch("ㅛ", "y", "^"), ch("ㅕ", "u", "4"), ch("ㅑ", "i", "5"),
+            ch("ㅐ", "o", "6"), ch("ㅔ", "p", "/", 1.25f)
         ),
         listOf(
-            ch("ㅁ", "a", "-", 1.5f), ch("ㄴ", "s", "_"), ch("ㅇ", "d", "="), ch("ㄹ", "f", "+"),
-            ch("ㅎ", "g", "["), ch("ㅗ", "h", "]"), ch("ㅓ", "j", "{"), ch("ㅏ", "k", "}"),
-            ch("ㅣ", "l", "\\", 1.5f)
+            ch("ㅁ", "a", "&", 1.5f), ch("ㄴ", "s", "*"), ch("ㅇ", "d", "-"), ch("ㄹ", "f", "+"),
+            ch("ㅎ", "g", "="), ch("ㅗ", "h", "\\"), ch("ㅓ", "j", "1"), ch("ㅏ", "k", "2"),
+            ch("ㅣ", "l", "3", 1.5f)
         ),
         listOf(
             fn(Key.Action(ActionType.SHIFT, "⇧", 1.5f)),
-            ch("ㅋ", "z", ";"), ch("ㅌ", "x", ":"), ch("ㅊ", "c", "'"), ch("ㅍ", "v", "\""),
-            ch("ㅠ", "b", "<"), ch("ㅜ", "n", ">"), ch("ㅡ", "m", "?"),
+            ch("ㅋ", "z", "("), ch("ㅌ", "x", ")"), ch("ㅊ", "c", "["), ch("ㅍ", "v", "]"),
+            ch("ㅠ", "b", "<"), ch("ㅜ", "n", "."), ch("ㅡ", "m", "0"),
             fn(Key.Action(ActionType.BACKSPACE, "⌫", 1.5f))
         )
     )
@@ -154,8 +159,10 @@ object KeyboardLayouts {
         "1" to "!", "2" to "@", "3" to "#", "4" to "$", "5" to "%",
         "6" to "^", "7" to "&", "8" to "*", "9" to "(", "0" to ")"
     )
-    // 무시프트 기호 레이어에 없는 것(~ `)을 시프트로 보충.
-    private val SYMBOL_SHIFT = mapOf("!" to "~", "@" to "`")
+    // 무시프트 기호 레이어에 없는 것(> : ; ~ `)을 시프트로 보충.
+    private val SYMBOL_SHIFT = mapOf(
+        "!" to "~", "@" to "`", "^" to ">", "&" to ":", "*" to ";"
+    )
 
     fun shiftKorean(rows: List<List<Key>>): List<List<Key>> = rows.map { line ->
         line.map { key ->
@@ -178,11 +185,11 @@ object KeyboardLayouts {
         }
     }
 
+    // 기호 레이어 시프트: 보충 기호만 치환. numpad·숫자줄은 시프트해도 숫자 그대로.
     fun shiftSymbols(rows: List<List<Key>>): List<List<Key>> = rows.map { line ->
         line.map { key ->
             if (key is Key.Char)
-                (NUMBER_SHIFT[key.label] ?: SYMBOL_SHIFT[key.label])
-                    ?.let { s -> key.copy(label = s, output = s) } ?: key
+                SYMBOL_SHIFT[key.label]?.let { s -> key.copy(label = s, output = s) } ?: key
             else key
         }
     }
