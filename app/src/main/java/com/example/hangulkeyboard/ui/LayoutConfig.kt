@@ -10,12 +10,12 @@ import org.json.JSONObject
  * 앱은 이 JSON 이 있으면 그 배열로 키보드를 그리고, 없으면 [KeyboardLayouts]
  * 기본 배열을 쓴다. 시프트·분할·조합 같은 동작은 그대로 엔진(코드)에 남는다.
  *
- * JSON 형태:
+ * JSON 형태 — 펼침/접힘 프로파일별로 한글/영문/기호 배열을 담는다:
  * {
- *   "korean":  [ [row], [row], ... ],
- *   "english": [ ... ],
- *   "symbols": [ ... ]
+ *   "unfolded": { "korean":[[row],...], "english":[...], "symbols":[...] },
+ *   "folded":   { "korean":[...], ... }
  * }
+ * (예전처럼 최상단에 바로 korean/english/symbols 만 있으면 두 프로파일 공용으로 본다.)
  * 각 row 는 키 항목의 배열. 키 항목은:
  *   "ㅂ"                             일반 문자(라벨=출력, 폭 1)
  *   {"k":"ㅂ","out":"ㅂ","w":1.25}   문자(출력·폭 지정)
@@ -23,6 +23,19 @@ import org.json.JSONObject
  *   {"code":"TAB","l":"tab"}         하드웨어 키(아래 CODE_NAMES)
  */
 object LayoutConfig {
+
+    /** 프로파일별 커스텀 배열. 비어 있는 모드는 기본 배열로 폴백된다. */
+    data class Custom(
+        val unfolded: Map<KeyboardMode, List<List<Key>>>,
+        val folded: Map<KeyboardMode, List<List<Key>>>,
+    ) {
+        fun forFolded(isFolded: Boolean): Map<KeyboardMode, List<List<Key>>> =
+            if (isFolded) folded else unfolded
+
+        val isEmpty: Boolean get() = unfolded.isEmpty() && folded.isEmpty()
+
+        companion object { val EMPTY = Custom(emptyMap(), emptyMap()) }
+    }
 
     // JSON 이름 ↔ 하드웨어 keyCode. 편집기에서 쓰는 축약 이름.
     private val CODE_NAMES = mapOf(
@@ -42,13 +55,26 @@ object LayoutConfig {
         KeyboardMode.SYMBOLS to "symbols",
     )
 
-    /** JSON 문자열 → 모드별 행 목록. 파싱 실패한 모드는 결과에서 빠진다(기본값 폴백). */
-    fun parse(json: String?): Map<KeyboardMode, List<List<Key>>> {
-        if (json.isNullOrBlank()) return emptyMap()
-        val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptyMap()
+    /** JSON 문자열 → 프로파일별 커스텀 배열. 실패한 부분은 빠진다(기본값 폴백). */
+    fun parse(json: String?): Custom {
+        if (json.isNullOrBlank()) return Custom.EMPTY
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return Custom.EMPTY
+        // 프로파일 구조가 있으면 각각, 없으면(구형 평면형) 두 프로파일 공용으로.
+        return if (root.has("unfolded") || root.has("folded")) {
+            Custom(
+                unfolded = root.optJSONObject("unfolded")?.let(::parseModes) ?: emptyMap(),
+                folded = root.optJSONObject("folded")?.let(::parseModes) ?: emptyMap(),
+            )
+        } else {
+            val flat = parseModes(root)
+            Custom(flat, flat)
+        }
+    }
+
+    private fun parseModes(obj: JSONObject): Map<KeyboardMode, List<List<Key>>> {
         val out = mutableMapOf<KeyboardMode, List<List<Key>>>()
         for ((mode, key) in MODE_KEYS) {
-            val rowsJson = root.optJSONArray(key) ?: continue
+            val rowsJson = obj.optJSONArray(key) ?: continue
             runCatching { parseRows(rowsJson) }
                 .getOrNull()
                 ?.takeIf { it.isNotEmpty() }
@@ -83,9 +109,8 @@ object LayoutConfig {
         else -> Key.Char(item.toString())
     }
 
-    /** 모드별 행 목록 → JSON 문자열(편집기 시작점/내보내기용). */
-    fun export(layouts: Map<KeyboardMode, List<List<Key>>>): String {
-        val root = JSONObject()
+    private fun modesToJson(layouts: Map<KeyboardMode, List<List<Key>>>): JSONObject {
+        val obj = JSONObject()
         for ((mode, key) in MODE_KEYS) {
             val rows = layouts[mode] ?: continue
             val rowsJson = JSONArray()
@@ -94,9 +119,9 @@ object LayoutConfig {
                 row.forEach { rowJson.put(keyToJson(it)) }
                 rowsJson.put(rowJson)
             }
-            root.put(key, rowsJson)
+            obj.put(key, rowsJson)
         }
-        return root.toString(2)
+        return obj
     }
 
     private fun keyToJson(key: Key): Any = when (key) {
@@ -116,12 +141,19 @@ object LayoutConfig {
         is Key.Gap -> JSONObject().put("k", " ")   // 편집기엔 갭이 없지만 방어적으로.
     }
 
-    /** 기본 배열(현재 코드)을 JSON 으로 — 편집기 시작점. 분할 없음(bottomArrows=true) 기준. */
-    fun defaultJson(): String = export(
-        mapOf(
-            KeyboardMode.KOREAN to KeyboardLayouts.korean(AuxRows.ALL, bottomArrows = true),
-            KeyboardMode.ENGLISH to KeyboardLayouts.english(AuxRows.ALL, bottomArrows = true),
-            KeyboardMode.SYMBOLS to KeyboardLayouts.symbols(AuxRows.ALL, bottomArrows = true),
+    /**
+     * 기본 배열(현재 코드)을 프로파일별 JSON 으로 — 편집기 시작점.
+     * 펼침=보조줄 전체, 접힘=터미널 기능줄만(앱 프로파일 기본값과 동일). 분할 전 기준.
+     */
+    fun defaultJson(): String {
+        fun modes(aux: AuxRows) = mapOf(
+            KeyboardMode.KOREAN to KeyboardLayouts.korean(aux, bottomArrows = true),
+            KeyboardMode.ENGLISH to KeyboardLayouts.english(aux, bottomArrows = true),
+            KeyboardMode.SYMBOLS to KeyboardLayouts.symbols(aux, bottomArrows = true),
         )
-    )
+        return JSONObject()
+            .put("unfolded", modesToJson(modes(AuxRows.ALL)))
+            .put("folded", modesToJson(modes(AuxRows.TERMINAL)))
+            .toString(2)
+    }
 }

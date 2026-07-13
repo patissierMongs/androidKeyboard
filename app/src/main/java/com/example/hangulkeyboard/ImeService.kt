@@ -35,7 +35,6 @@ import com.example.hangulkeyboard.ui.KeyboardMode
 import com.example.hangulkeyboard.ui.KeyboardView
 import com.example.hangulkeyboard.ui.LayoutConfig
 import com.example.hangulkeyboard.ui.ShiftState
-import androidx.compose.runtime.mutableStateMapOf
 import org.json.JSONArray
 
 /**
@@ -102,8 +101,8 @@ class ImeService : InputMethodService(),
     private val typoTracker = TypoTracker()
     private var typoDirty = 0
 
-    // 사용자 커스텀 레이아웃(설정 앱에서 JSON 붙여넣기). 비어 있으면 기본 배열.
-    private val customLayout = mutableStateMapOf<KeyboardMode, List<List<Key>>>()
+    // 사용자 커스텀 레이아웃(설정 앱에서 JSON 붙여넣기, 프로파일별). 비면 기본 배열.
+    private var customLayouts by mutableStateOf(LayoutConfig.Custom.EMPTY)
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
     // 설정 앱에서 값을 바꾸면 키보드를 다시 열지 않아도 즉시 반영한다.
@@ -179,7 +178,7 @@ class ImeService : InputMethodService(),
                     onCharTouch = ::onCharTouch,
                     // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다.
                     confusionBoost = { from, to -> typoTracker.confusionCount(from, to) >= 10 },
-                    customRows = customLayout
+                    customRows = customLayouts.forFolded(foldedProfile)
                 )
             }
         }
@@ -384,8 +383,7 @@ class ImeService : InputMethodService(),
 
     /** 커스텀 레이아웃 JSON 을 (재)로드한다. 없거나 파싱 실패하면 기본 배열로. */
     private fun loadCustomLayout() {
-        customLayout.clear()
-        customLayout.putAll(LayoutConfig.parse(prefs.getString(KEY_CUSTOM_LAYOUT, null)))
+        customLayouts = LayoutConfig.parse(prefs.getString(KEY_CUSTOM_LAYOUT, null))
     }
 
     // ---- 입력 처리 ----

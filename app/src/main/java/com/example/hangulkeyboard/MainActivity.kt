@@ -264,7 +264,7 @@ private fun LayoutSection(prefs: SharedPreferences) {
                 if (json.isEmpty()) {
                     prefs.edit().remove("custom_layout").apply()
                     status = "커스텀 해제 — 기본 배열로."
-                } else if (LayoutConfig.parse(json).isEmpty()) {
+                } else if (LayoutConfig.parse(json).isEmpty) {
                     status = "JSON 을 읽지 못했습니다. 형식을 확인하세요."
                 } else {
                     prefs.edit().putString("custom_layout", json).apply()
