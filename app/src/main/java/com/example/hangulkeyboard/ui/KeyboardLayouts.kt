@@ -41,201 +41,149 @@ enum class AuxRows { ALL, TERMINAL_NUMBER, TERMINAL, NONE }
 
 object KeyboardLayouts {
 
-    // 글자 자판 본체(글자 3줄 + 액션줄). 보조줄은 auxRowsFor 로 앞에 붙는다.
-    // bottomArrows=false(분할 시)면 액션줄 방향키 자리가 ! ( ) / 로 바뀐다.
-    private fun englishMain(bottomArrows: Boolean): List<List<Key>> = listOf(
-        row("q w e r t y u i o p"),
-        indentedRow("a s d f g h j k l"),
-        bottomLetterRow("z x c v b n m"),
-        actionRow(bottomArrows)
+    // ── 공유 프레임(물리 키보드처럼 한 격자) ─────────────────────────────
+    // 하나의 키 격자를 정의하고, 각 글자 슬롯이 한글/영문/기호 값을 함께 갖는다.
+    // 모드를 바꿔도(한/영 · ?123) 키 위치·폭은 그대로고 '내는 값'만 바뀐다.
+    // 기능 키(⇧ · space · ↵ · 방향키 등)는 모든 레이어에서 동일하다.
+
+    private sealed interface Slot {
+        /** 모든 레이어 공통 기능 키. */
+        data class Fn(val key: Key) : Slot
+        /** 글자 슬롯. 레이어별 값(kor/eng/sym)과 고정 폭. */
+        data class Ch(val kor: String, val eng: String, val sym: String, val w: Float = 1f) : Slot
+    }
+
+    private fun ch(kor: String, eng: String, sym: String, w: Float = 1f) = Slot.Ch(kor, eng, sym, w)
+    private fun same(s: String, w: Float = 1f) = Slot.Ch(s, s, s, w)   // 레이어와 무관한 고정 문자
+    private fun fn(key: Key) = Slot.Fn(key)
+
+    private fun slotKey(slot: Slot, mode: KeyboardMode): Key = when (slot) {
+        is Slot.Fn -> slot.key
+        is Slot.Ch -> Key.Char(
+            when (mode) {
+                KeyboardMode.KOREAN -> slot.kor
+                KeyboardMode.ENGLISH -> slot.eng
+                KeyboardMode.SYMBOLS -> slot.sym
+            },
+            weight = slot.w
+        )
+    }
+
+    // 글자 3줄 — 두벌식/QWERTY 위치에 기호 레이어를 얹었다. 폭은 프레임에 고정이라
+    // 한/영/기호 어느 레이어에서도 키가 움직이지 않는다.
+    private val LETTER_ROWS: List<List<Slot>> = listOf(
+        listOf(
+            ch("ㅂ", "q", "!", 1.25f), ch("ㅈ", "w", "@"), ch("ㄷ", "e", "#"), ch("ㄱ", "r", "$"),
+            ch("ㅅ", "t", "%"), ch("ㅛ", "y", "^"), ch("ㅕ", "u", "&"), ch("ㅑ", "i", "*"),
+            ch("ㅐ", "o", "("), ch("ㅔ", "p", ")", 1.25f)
+        ),
+        listOf(
+            ch("ㅁ", "a", "-", 1.5f), ch("ㄴ", "s", "_"), ch("ㅇ", "d", "="), ch("ㄹ", "f", "+"),
+            ch("ㅎ", "g", "["), ch("ㅗ", "h", "]"), ch("ㅓ", "j", "{"), ch("ㅏ", "k", "}"),
+            ch("ㅣ", "l", "\\", 1.5f)
+        ),
+        listOf(
+            fn(Key.Action(ActionType.SHIFT, "⇧", 1.5f)),
+            ch("ㅋ", "z", ";"), ch("ㅌ", "x", ":"), ch("ㅊ", "c", "'"), ch("ㅍ", "v", "\""),
+            ch("ㅠ", "b", "<"), ch("ㅜ", "n", ">"), ch("ㅡ", "m", "?"),
+            fn(Key.Action(ActionType.BACKSPACE, "⌫", 1.5f))
+        )
     )
 
-    private fun koreanMain(bottomArrows: Boolean): List<List<Key>> = listOf(
-        row("ㅂ ㅈ ㄷ ㄱ ㅅ ㅛ ㅕ ㅑ ㅐ ㅔ"),
-        indentedRow("ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ"),
-        bottomLetterRow("ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ"),
-        actionRow(bottomArrows)
+    // 상단 보조줄 — 기능/기호/숫자. 세 레이어 공통(위치·값 고정).
+    private fun termRow(): List<Slot> = listOf(
+        fn(Key.KeyCode("tab", KeyEvent.KEYCODE_TAB)),
+        fn(Key.Action(ActionType.ALT, "alt")),
+        fn(Key.KeyCode("del", KeyEvent.KEYCODE_FORWARD_DEL)),
+        fn(Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME)),
+        fn(Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END)),
+        fn(Key.Action(ActionType.CLIPBOARD, "📋")),
+        fn(Key.Action(ActionType.SNIPPETS, "✂")),
+        fn(Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP)),
+        fn(Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN)),
+        same("+"), same("-"), same("=")
     )
+    private fun progRow(): List<Slot> = listOf(
+        same("'"), same("\""), same("|"), same("/"), same("\\"),
+        same("{"), same("}"), same("["), same("]"), same("_")
+    )
+    private fun numRow(): List<Slot> = "1 2 3 4 5 6 7 8 9 0".split(" ").map { same(it) }
 
-    /** 영문 QWERTY — 프로파일이 고른 보조줄 + 글자 자판. */
-    fun english(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
-        auxRowsFor(aux) + englishMain(bottomArrows)
-
-    /** 한글 두벌식 — 프로파일이 고른 보조줄 + 글자 자판. */
-    fun korean(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
-        auxRowsFor(aux) + koreanMain(bottomArrows)
-
-    private fun auxRowsFor(aux: AuxRows): List<List<Key>> = when (aux) {
-        AuxRows.ALL -> listOf(terminalRow(), progRow(), numberRow())
-        AuxRows.TERMINAL_NUMBER -> listOf(terminalRow(), numberRow())
-        AuxRows.TERMINAL -> listOf(terminalRow())
+    private fun auxRows(aux: AuxRows): List<List<Slot>> = when (aux) {
+        AuxRows.ALL -> listOf(termRow(), progRow(), numRow())
+        AuxRows.TERMINAL_NUMBER -> listOf(termRow(), numRow())
+        AuxRows.TERMINAL -> listOf(termRow())
         AuxRows.NONE -> emptyList()
     }
 
-    // 기호 자판 — 풀 키보드 numpad 그대로. 오른쪽 열이 연산자 / * - 이고,
-    // 맨 아래(액션줄)에 0 . ↵(numpad Enter)가 온다:
-    //   7 8 9 /
-    //   4 5 6 *
-    //   1 2 3 -
-    //       0 . ↵
-    // 왼쪽엔 자주 쓰는 기호, 나머지는 Shift 층(SYMBOL_SHIFT). 보조줄은 글자
-    // 자판과 같은 터미널 기능줄만 써서 📋·✂ 위치가 통일된다.
-    private fun symbolsMain(): List<List<Key>> = listOf(
-        charKeys("! @ # $ % ^ 7 8 9 /"),
-        charKeys("& * ( ) - _ 4 5 6 *"),
-        // ⇧ + 기호 5칸 + numpad(1 2 3 -). 모두 폭 1 로 열이 정렬된다.
-        listOf<Key>(Key.Action(ActionType.SHIFT, "⇧", weight = 1f)) +
-            charKeys("= + [ ] {") + charKeys("1 2 3 -"),
-        symActionRow()
+    // 맨 아래 기능줄 — 모든 레이어 공통. 분할(bottomArrows=false) 시 가운데 미니
+    // 방향키가 있으므로 방향키 자리에 자주 쓰는 특수문자를 둔다.
+    private fun actionRow(bottomArrows: Boolean): List<Slot> = listOf(
+        fn(Key.Action(ActionType.CTRL, "ctrl")),
+        fn(Key.Action(ActionType.SYMBOLS, "?123")),
+        fn(Key.Action(ActionType.LANGUAGE, "한/A")),
+        if (bottomArrows) fn(Key.Action(ActionType.LEFT, "◀")) else same("!"),
+        fn(Key.Action(ActionType.SPACE, "", 1.56f)),
+        if (bottomArrows) fn(Key.Action(ActionType.UP, "▲", 0.94f)) else same("(", 0.94f),
+        if (bottomArrows) fn(Key.Action(ActionType.DOWN, "▼")) else same(")"),
+        same("?"),
+        if (bottomArrows) fn(Key.Action(ActionType.COMMA, ",", 0.94f)) else same("/", 0.94f),
+        fn(Key.Action(ActionType.SPACE, "", 1.56f)),
+        if (bottomArrows) fn(Key.Action(ActionType.RIGHT, "▶")) else fn(Key.Action(ActionType.COMMA, ",")),
+        fn(Key.Action(ActionType.PERIOD, ".")),
+        fn(Key.Action(ActionType.ENTER, "↵"))
     )
 
-    // 기호 자판 액션줄. 오른쪽에 numpad 하단 0 . ↵ 를 두어 아래 열과 맞춘다.
-    private fun symActionRow(): List<Key> = listOf(
-        Key.Action(ActionType.CTRL, "ctrl"),
-        Key.Action(ActionType.SYMBOLS, "?123"),
-        Key.Action(ActionType.LANGUAGE, "한/A"),
-        Key.Action(ActionType.COMMA, ","),
-        Key.Action(ActionType.BACKSPACE, "⌫", weight = 1.5f),
-        Key.Action(ActionType.SPACE, "", weight = 2f),
-        Key.Char("0", weight = 2f),   // numpad 0 (숫자 아래, 넓게)
-        Key.Char("."),
-        Key.Action(ActionType.ENTER, "↵", weight = 1.5f)   // numpad Enter
-    )
+    private fun frame(aux: AuxRows, bottomArrows: Boolean): List<List<Slot>> =
+        auxRows(aux) + LETTER_ROWS + listOf(actionRow(bottomArrows))
 
-    fun symbols(aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
-        symbolsAuxFor(aux) + symbolsMain()
+    private fun render(mode: KeyboardMode, aux: AuxRows, bottomArrows: Boolean): List<List<Key>> =
+        frame(aux, bottomArrows).map { row -> row.map { slotKey(it, mode) } }
 
-    // 기호 자판 보조줄: 글자 자판과 동일한 터미널 기능줄만(📋·✂ 위치 통일).
-    // 희소·확장 기호줄은 제거 — 잘 안 쓰는 기호는 Shift 층으로.
-    private fun symbolsAuxFor(aux: AuxRows): List<List<Key>> =
-        if (aux == AuxRows.NONE) emptyList() else listOf(terminalRow())
+    /** 세 자판 모두 같은 프레임에서 나온다 — 전환해도 키가 움직이지 않는다. */
+    fun korean(aux: AuxRows, bottomArrows: Boolean) = render(KeyboardMode.KOREAN, aux, bottomArrows)
+    fun english(aux: AuxRows, bottomArrows: Boolean) = render(KeyboardMode.ENGLISH, aux, bottomArrows)
+    fun symbols(aux: AuxRows, bottomArrows: Boolean) = render(KeyboardMode.SYMBOLS, aux, bottomArrows)
 
-    // Shift 로 얻는 나머지 기호(무시프트에 없는 것 전부). 자주 쓰는 건 무시프트로.
-    private val SYMBOL_SHIFT = mapOf(
-        "!" to "~", "@" to "`", "#" to "|", "$" to "\\",
-        "%" to "<", "^" to ">", "&" to ";", "*" to ":",
-        "(" to "'", ")" to "\"", "=" to "?", "[" to "}"
-    )
-
-    /** 기호 자판 시프트: SYMBOL_SHIFT 쌍만 치환(numpad 숫자는 그대로). weight 유지. */
-    fun shiftSymbols(rows: List<List<Key>>): List<List<Key>> =
-        rows.map { line ->
-            line.map { key ->
-                if (key is Key.Char)
-                    SYMBOL_SHIFT[key.label]?.let { s -> key.copy(label = s, output = s) } ?: key
-                else key
-            }
-        }
-
-    /** 영문 대문자 변환 + 시프트한 숫자 → 특수문자. weight 는 유지(레이아웃 불변). */
-    fun shiftEnglish(rows: List<List<Key>>): List<List<Key>> =
-        rows.map { line ->
-            line.map { key ->
-                when {
-                    key is Key.Char && key.label.length == 1 && key.label[0].isLetter() ->
-                        key.copy(label = key.label.uppercase(), output = key.output.uppercase())
-                    key is Key.Char && NUMBER_SHIFT.containsKey(key.label) ->
-                        NUMBER_SHIFT.getValue(key.label).let { key.copy(label = it, output = it) }
-                    else -> key
-                }
-            }
-        }
-
-    // 한글 시프트(쌍자음/이중모음). 매핑이 있는 키만 치환.
+    // ── 시프트 변환(표시된 라벨 기준, 커스텀 배열에도 적용됨) ────────────────
     private val KOREAN_SHIFT = mapOf(
         "ㅂ" to "ㅃ", "ㅈ" to "ㅉ", "ㄷ" to "ㄸ", "ㄱ" to "ㄲ", "ㅅ" to "ㅆ",
         "ㅐ" to "ㅒ", "ㅔ" to "ㅖ"
     )
-
-    // 시프트한 숫자 → 특수문자 (US 자판 기준). 한/영 모드 공통으로 쓴다.
     private val NUMBER_SHIFT = mapOf(
         "1" to "!", "2" to "@", "3" to "#", "4" to "$", "5" to "%",
         "6" to "^", "7" to "&", "8" to "*", "9" to "(", "0" to ")"
     )
+    // 무시프트 기호 레이어에 없는 것(~ `)을 시프트로 보충.
+    private val SYMBOL_SHIFT = mapOf("!" to "~", "@" to "`")
 
-    /** 한글 시프트(쌍자음/이중모음) + 시프트한 숫자 → 특수문자. weight 유지. */
-    fun shiftKorean(rows: List<List<Key>>): List<List<Key>> =
-        rows.map { line ->
-            line.map { key ->
-                if (key is Key.Char)
-                    (KOREAN_SHIFT[key.label] ?: NUMBER_SHIFT[key.label])
-                        ?.let { s -> key.copy(label = s, output = s) } ?: key
-                else key
+    fun shiftKorean(rows: List<List<Key>>): List<List<Key>> = rows.map { line ->
+        line.map { key ->
+            if (key is Key.Char)
+                (KOREAN_SHIFT[key.label] ?: NUMBER_SHIFT[key.label])
+                    ?.let { s -> key.copy(label = s, output = s) } ?: key
+            else key
+        }
+    }
+
+    fun shiftEnglish(rows: List<List<Key>>): List<List<Key>> = rows.map { line ->
+        line.map { key ->
+            when {
+                key is Key.Char && key.label.length == 1 && key.label[0].isLetter() ->
+                    key.copy(label = key.label.uppercase(), output = key.output.uppercase())
+                key is Key.Char && NUMBER_SHIFT.containsKey(key.label) ->
+                    NUMBER_SHIFT.getValue(key.label).let { key.copy(label = it, output = it) }
+                else -> key
             }
         }
-
-    // 10칸짜리 윗줄. 양 끝 키(ㅂ/ㅔ, q/p, 1/0)는 화면 가장자리라 오타가 잦아
-    // 살짝 넓힌다(홈row 의 1.5 보다는 완만하게 1.25).
-    private fun row(spaceSeparated: String): List<Key> {
-        val parts = spaceSeparated.split(" ")
-        return parts.mapIndexed { i, s ->
-            Key.Char(s, weight = if (i == 0 || i == parts.lastIndex) 1.25f else 1f)
-        }
     }
 
-    // 9칸짜리 홈row. 좌우 빈칸 없이 양끝 키(ㅁ/ㅣ, a/l)만 넓혀 폭을 채운다.
-    private fun indentedRow(spaceSeparated: String): List<Key> {
-        val parts = spaceSeparated.split(" ")
-        return parts.mapIndexed { i, s ->
-            Key.Char(s, weight = if (i == 0 || i == parts.lastIndex) 1.5f else 1f)
+    fun shiftSymbols(rows: List<List<Key>>): List<List<Key>> = rows.map { line ->
+        line.map { key ->
+            if (key is Key.Char)
+                (NUMBER_SHIFT[key.label] ?: SYMBOL_SHIFT[key.label])
+                    ?.let { s -> key.copy(label = s, output = s) } ?: key
+            else key
         }
     }
-
-    // 상단 숫자줄. 시프트하면 NUMBER_SHIFT 매핑으로 특수문자가 된다.
-    private fun numberRow(): List<Key> = charKeys("1 2 3 4 5 6 7 8 9 0")
-
-    // 맨 윗줄: 코딩/터미널에서 자주 쓰는 키. 📋 = 클립보드, ✂ = 스니펫
-    // (각각 탭 = 토글, 길게 = 서로 교차 전환).
-    private fun terminalRow(): List<Key> = listOf(
-        Key.KeyCode("tab", KeyEvent.KEYCODE_TAB),
-        Key.Action(ActionType.ALT, "alt"),
-        Key.KeyCode("del", KeyEvent.KEYCODE_FORWARD_DEL),
-        Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME),
-        Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END),
-        Key.Action(ActionType.CLIPBOARD, "📋"),
-        Key.Action(ActionType.SNIPPETS, "✂"),
-        Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP),
-        Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN),
-        Key.Char("+"),
-        Key.Char("-"),
-        Key.Char("=")
-    )
-
-    // 프로그래밍/쉘에서 자주 쓰는 특수문자줄
-    // 프로그래밍/쉘 특수문자줄. 따옴표 ' " 를 한/영 자판에서도 바로 치도록 포함.
-    private fun progRow(): List<Key> = charKeys("' \" | / \\ { } [ ] _")
-
-    private fun charKeys(spaceSeparated: String): List<Key> =
-        spaceSeparated.split(" ").map { Key.Char(it) }
-
-    // 글자줄 + 좌측 Shift / 우측 Backspace
-    private fun bottomLetterRow(letters: String): List<Key> =
-        listOf<Key>(Key.Action(ActionType.SHIFT, "⇧"))
-            .plus(charKeys(letters))
-            .plus(Key.Action(ActionType.BACKSPACE, "⌫"))
-
-    // 맨 아래 기능키 줄 (맨 앞 Ctrl 추가, 문장부호는 ,→? .→, ?→. 로 순환):
-    //  Ctrl · ?123 · 한/A · ◀ · [space] · ▲ · ▼ · ? · , · [space] · ▶ · . · ↵
-    // 분할(bottomArrows=false)이면 가운데 미니 방향키가 있으므로 방향키 자리에
-    // 자주 쓰는 특수문자(! ( ) /)를 둔다.
-    private fun actionRow(bottomArrows: Boolean = true): List<Key> = listOf(
-        Key.Action(ActionType.CTRL, "ctrl"),
-        Key.Action(ActionType.SYMBOLS, "?123"),
-        Key.Action(ActionType.LANGUAGE, "한/A"),
-        if (bottomArrows) Key.Action(ActionType.LEFT, "◀") else Key.Char("!"),
-        // 스페이스는 가운데 쪽으로 살짝 넓히고(+0.06) 그만큼 가운데 쪽 이웃을
-        // 줄여, 둘 사이 경계만 움직이고 다른 키 경계는 그대로 둔다.
-        Key.Action(ActionType.SPACE, "", weight = 1.56f),
-        if (bottomArrows) Key.Action(ActionType.UP, "▲", weight = 0.94f)
-        else Key.Char("(", weight = 0.94f),
-        if (bottomArrows) Key.Action(ActionType.DOWN, "▼") else Key.Char(")"),
-        Key.Char("?"),
-        // 분할이면 , 를 오른쪽 . 옆으로 보내고 이 자리는 / 가 차지한다.
-        if (bottomArrows) Key.Action(ActionType.COMMA, ",", weight = 0.94f)
-        else Key.Char("/", weight = 0.94f),
-        Key.Action(ActionType.SPACE, "", weight = 1.56f),
-        if (bottomArrows) Key.Action(ActionType.RIGHT, "▶") else Key.Action(ActionType.COMMA, ","),
-        Key.Action(ActionType.PERIOD, "."),
-        Key.Action(ActionType.ENTER, "↵")
-    )
 }
