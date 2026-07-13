@@ -36,6 +36,7 @@ import com.example.hangulkeyboard.ui.KeyboardView
 import com.example.hangulkeyboard.ui.LayoutConfig
 import com.example.hangulkeyboard.ui.ShiftState
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Jetpack Compose 로 그리는 한/영 입력기(IME).
@@ -98,8 +99,15 @@ class ImeService : InputMethodService(),
     // 오타 측정기: 터치 편향 + (입력→백스페이스→다른 키) 혼동 쌍을 기기 안에만
     // 기록한다. 설정 앱의 '오타 분석' 화면이 이 데이터를 읽고, 혼동이 잦은
     // 경계는 스냅 폭을 자동으로 넓힌다.
-    private val typoTracker = TypoTracker()
+    // 오타 통계는 레이아웃별로 따로 기록·보정한다:
+    //   버킷 = "<mode>_<folded|unfolded>"  (예: korean_unfolded, symbols_folded)
+    private val typoTrackers = mutableMapOf<String, TypoTracker>()
     private var typoDirty = 0
+
+    private fun typoBucket(): String =
+        mode.name.lowercase() + "_" + (if (foldedProfile) "folded" else "unfolded")
+
+    private fun typo(): TypoTracker = typoTrackers.getOrPut(typoBucket()) { TypoTracker() }
 
     // 사용자 커스텀 레이아웃(설정 앱에서 JSON 붙여넣기, 프로파일별). 비면 기본 배열.
     private var customLayouts by mutableStateOf(LayoutConfig.Custom.EMPTY)
@@ -115,7 +123,7 @@ class ImeService : InputMethodService(),
                 key == KEY_CUSTOM_LAYOUT -> loadCustomLayout()
                 // 설정 앱에서 '초기화'로 지웠을 때만 리셋(자체 저장은 무시).
                 key == KEY_TYPO_STATS ->
-                    if (prefs.getString(KEY_TYPO_STATS, null) == null) typoTracker.reset()
+                    if (prefs.getString(KEY_TYPO_STATS, null) == null) typoTrackers.clear()
                 key.startsWith(PROFILE_FOLDED) || key.startsWith(PROFILE_UNFOLDED) -> loadProfile()
             }
         }
@@ -129,7 +137,7 @@ class ImeService : InputMethodService(),
         loadSnippets()
         migrateLegacyPins()
         loadCustomLayout()
-        typoTracker.loadJson(prefs.getString(KEY_TYPO_STATS, null))
+        loadTypoStats()
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
     }
@@ -176,8 +184,8 @@ class ImeService : InputMethodService(),
                     // 초성만 있는 상태 → 다음 자모는 모음일 확률이 높다(경계 스냅용).
                     expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel },
                     onCharTouch = ::onCharTouch,
-                    // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다.
-                    confusionBoost = { from, to -> typoTracker.confusionCount(from, to) >= 10 },
+                    // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다(현재 레이아웃 버킷).
+                    confusionBoost = { from, to -> typo().confusionCount(from, to) >= 10 },
                     customRows = customLayouts.forFolded(foldedProfile)
                 )
             }
@@ -268,16 +276,36 @@ class ImeService : InputMethodService(),
         super.onFinishInputView(finishingInput)
     }
 
-    /** 글자 키 터치 지점 기록(키 셀 안 정규화 좌표). 50타마다 저장. */
+    /** 글자 키 터치 지점 기록(현재 레이아웃 버킷). 50타마다 저장. */
     private fun onCharTouch(label: String, fx: Float, fy: Float) {
-        typoTracker.onCharPress(label, fx, fy, SystemClock.uptimeMillis())
+        typo().onCharPress(label, fx, fy, SystemClock.uptimeMillis())
         if (++typoDirty >= 50) persistTypoStats()
     }
 
+    /** 버킷별 통계를 하나의 JSON 오브젝트({bucket: 통계})로 저장. */
     private fun persistTypoStats() {
         if (typoDirty == 0) return
         typoDirty = 0
-        prefs.edit().putString(KEY_TYPO_STATS, typoTracker.toJson()).apply()
+        val root = JSONObject()
+        typoTrackers.forEach { (bucket, t) -> root.put(bucket, JSONObject(t.toJson())) }
+        prefs.edit().putString(KEY_TYPO_STATS, root.toString()).apply()
+    }
+
+    /** 저장된 버킷별 통계를 읽는다. 예전 단일 형식이면 korean_unfolded 로 승격. */
+    private fun loadTypoStats() {
+        typoTrackers.clear()
+        val raw = prefs.getString(KEY_TYPO_STATS, null) ?: return
+        runCatching {
+            val root = JSONObject(raw)
+            if (root.has("taps") || root.has("confusion")) {
+                // 구형: 통계 오브젝트가 최상단. 기본 버킷으로 옮긴다.
+                typoTrackers["korean_unfolded"] = TypoTracker().apply { loadJson(raw) }
+            } else {
+                root.keys().forEach { bucket ->
+                    typoTrackers[bucket] = TypoTracker().apply { loadJson(root.getJSONObject(bucket).toString()) }
+                }
+            }
+        }
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
@@ -455,7 +483,7 @@ class ImeService : InputMethodService(),
             }
 
             ActionType.BACKSPACE -> {
-                typoTracker.onBackspace(SystemClock.uptimeMillis())
+                typo().onBackspace(SystemClock.uptimeMillis())
                 if (composer.backspace()) {
                     ic.setComposingText(composer.composing, 1)
                 } else {
@@ -492,14 +520,14 @@ class ImeService : InputMethodService(),
             ActionType.UNDO -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_Z)
 
             ActionType.SPACE -> {
-                typoTracker.onOtherInput()
+                typo().onOtherInput()
                 commitComposing()
                 ic.commitText(" ", 1)
                 selectActive = false
             }
 
             ActionType.ENTER -> {
-                typoTracker.onOtherInput()
+                typo().onOtherInput()
                 commitComposing()
                 selectActive = false
                 if (shifted) {
@@ -573,7 +601,7 @@ class ImeService : InputMethodService(),
 
     /** 조합 중인 글자를 확정하고 방향키(DPAD)로 커서를 옮긴다. Ctrl 조합이면 단어 이동 등. */
     private fun moveCursor(ic: android.view.inputmethod.InputConnection, keyCode: Int) {
-        typoTracker.onOtherInput()
+        typo().onOtherInput()
         commitComposing()
         sendKeyWithMeta(ic, keyCode, activeMeta() or selectionMeta())
         clearMods()
@@ -582,7 +610,7 @@ class ImeService : InputMethodService(),
     /** Del/Home/End/PgUp/PgDn 등 하드웨어 키를 (Ctrl/Alt 조합과 함께) 전송. */
     private fun onKeyCodeKey(code: Int) {
         val ic = currentInputConnection ?: return
-        typoTracker.onOtherInput()
+        typo().onOtherInput()
         commitComposing()
         // 이동 키에만 선택(Shift)을 싣는다. 그 외(tab/del/esc 등)는 선택 모드를
         // 끄고 평범하게 처리 — del 은 선택영역 삭제, esc 는 선택 취소가 된다.

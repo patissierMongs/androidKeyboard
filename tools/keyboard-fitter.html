@@ -1,0 +1,650 @@
+<title>키보드 맞춤 마법사</title>
+<style>
+  :root {
+    --bg:#eceff1; --surface:#fff; --sunken:#f2f5f7;
+    --key:#fff; --key-act:#b0bec5; --key-code:#cfd8dc;
+    --text:#1a1a1a; --muted:#5c6b78; --border:#cbd5db;
+    --accent:#2e9e46; --ink:#fff; --danger:#c0392b; --warn:#d98a2b;
+    --heat0:#e7edf0; --heat1:#f4d68a; --heat2:#e79a5a; --heat3:#d6604a;
+    --ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;
+    --r:10px;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#14181b; --surface:#1d2329; --sunken:#171c21;
+    --key:#2a333b; --key-act:#454e56; --key-code:#3a444d;
+    --text:#e6edf3; --muted:#8b98a5; --border:#313b44;
+    --accent:#4caf50; --ink:#08130a; --danger:#e5786d; --warn:#e0a552;
+    --heat0:#232c33; --heat1:#5c4a1f; --heat2:#8a5a2d; --heat3:#a8443a;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#14181b; --surface:#1d2329; --sunken:#171c21;
+    --key:#2a333b; --key-act:#454e56; --key-code:#3a444d;
+    --text:#e6edf3; --muted:#8b98a5; --border:#313b44;
+    --accent:#4caf50; --ink:#08130a; --danger:#e5786d; --warn:#e0a552;
+    --heat0:#232c33; --heat1:#5c4a1f; --heat2:#8a5a2d; --heat3:#a8443a;
+  }
+  :root[data-theme="light"]{
+    --bg:#eceff1; --surface:#fff; --sunken:#f2f5f7;
+    --key:#fff; --key-act:#b0bec5; --key-code:#cfd8dc;
+    --text:#1a1a1a; --muted:#5c6b78; --border:#cbd5db;
+    --accent:#2e9e46; --ink:#fff; --danger:#c0392b; --warn:#d98a2b;
+    --heat0:#e7edf0; --heat1:#f4d68a; --heat2:#e79a5a; --heat3:#d6604a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--ui);line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 20px 72px}
+  h1{font-size:22px;margin:0 0 2px;letter-spacing:-.01em}
+  .lede{color:var(--muted);font-size:14px;margin:0}
+  a{color:var(--accent)}
+
+  /* stepper */
+  .steps{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 8px}
+  .step{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);
+    padding:5px 11px;border:1px solid var(--border);border-radius:20px;background:var(--surface)}
+  .step .n{width:18px;height:18px;border-radius:50%;background:var(--sunken);color:var(--muted);
+    display:grid;place-items:center;font:600 11px var(--mono)}
+  .step.on{color:var(--text);border-color:var(--accent)}
+  .step.on .n{background:var(--accent);color:var(--ink)}
+  .step.done .n{background:var(--accent);color:var(--ink)}
+  .ctx{font-size:12.5px;color:var(--muted);margin:2px 0 14px}
+  .ctx b{color:var(--accent)}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:16px}
+  .card h2{font-size:16px;margin:0 0 4px}
+  .card p.note{color:var(--muted);font-size:13px;margin:0 0 14px}
+
+  .checks{display:grid;grid-template-columns:1fr;gap:10px}
+  @media(min-width:620px){.checks{grid-template-columns:1fr 1fr}}
+  .chk{display:flex;gap:11px;align-items:flex-start;padding:12px 13px;border:1px solid var(--border);
+    border-radius:9px;cursor:pointer;background:var(--sunken)}
+  .chk.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--surface))}
+  .chk input{margin-top:3px;accent-color:var(--accent);width:16px;height:16px}
+  .chk .t{font-weight:600;font-size:14px}
+  .chk .d{color:var(--muted);font-size:12.5px}
+
+  .board{background:var(--sunken);border:1px solid var(--border);border-radius:var(--r);padding:9px;overflow-x:auto}
+  .krow{display:flex;gap:4px;margin-bottom:5px;min-width:520px}
+  .krow:last-child{margin-bottom:0}
+  .key{font:500 15px var(--mono);min-width:26px;min-height:46px;padding:4px 2px;flex-basis:0;
+    display:flex;align-items:center;justify-content:center;text-align:center;
+    background:var(--key);color:var(--text);border:1px solid var(--border);border-radius:7px;
+    overflow:hidden;white-space:nowrap;position:relative;transition:flex-grow .35s ease,background .25s}
+  .key.k-act{background:var(--key-act);font-size:12px;font-weight:600}
+  .key.k-code{background:var(--key-code);font-size:11px}
+  .key.next{outline:3px solid var(--accent);outline-offset:1px;z-index:2}
+  .key.hot{cursor:pointer}
+  .key.hot:hover{border-color:var(--accent)}
+  .key .badge{position:absolute;top:1px;right:3px;font:600 9px var(--mono);color:var(--muted)}
+
+  .btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
+  button{font:600 14px var(--ui);padding:9px 18px;border-radius:8px;cursor:pointer;
+    background:var(--sunken);color:var(--text);border:1px solid var(--border)}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:var(--ink);border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .ghost{background:transparent}
+  .spacer{flex:1}
+
+  /* practice */
+  .type-target{font:22px/1.7 var(--mono);background:var(--sunken);border:1px solid var(--border);
+    border-radius:9px;padding:14px 16px;margin-bottom:12px;word-break:break-all;min-height:60px}
+  .type-target .done{color:var(--muted)}
+  .type-target .cur{background:var(--accent);color:var(--ink);border-radius:3px;padding:0 2px}
+  .type-target .err{background:var(--danger);color:#fff;border-radius:3px;padding:0 2px}
+  .prog{height:6px;background:var(--sunken);border-radius:3px;overflow:hidden;margin-bottom:12px}
+  .prog>i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+  .stat{display:flex;gap:20px;font-size:13px;color:var(--muted);margin-bottom:6px}
+  .stat b{color:var(--text);font-variant-numeric:tabular-nums}
+
+  .palette{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+  .palette button{font:15px var(--mono);padding:8px 12px;min-width:40px}
+  .palette button.sel{background:var(--accent);color:var(--ink);border-color:var(--accent)}
+
+  textarea{width:100%;min-height:150px;font:12.5px/1.5 var(--mono);padding:12px;background:var(--sunken);
+    color:var(--text);border:1px solid var(--border);border-radius:8px;resize:vertical;tab-size:2}
+  code.i{font-family:var(--mono);background:var(--sunken);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .sw{width:13px;height:13px;border-radius:3px;border:1px solid var(--border)}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--text);
+    color:var(--bg);padding:10px 18px;border-radius:8px;font-size:13.5px;font-weight:600;opacity:0;
+    pointer-events:none;transition:opacity .2s,transform .2s;z-index:9}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .modes{display:flex;gap:4px;margin-bottom:10px}
+  .modes button{font:600 13px var(--ui);padding:6px 14px}
+  .modes button.on{background:var(--accent);color:var(--ink);border-color:var(--accent)}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>키보드 맞춤 마법사</h1>
+    <p class="lede">기본 배열은 <b>참고용 프레임</b>일 뿐입니다. 실제로 어떻게 치는지를 재서, 접었을 때·펼쳤을 때 각각 당신에게 맞는 배열과 키 크기를 만들어 드립니다.</p>
+  </header>
+
+  <div class="steps" id="steps"></div>
+  <div class="ctx" id="ctx"></div>
+
+  <div id="screen"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ═══════════════════════ 키/레이아웃 모델 (앱 LayoutConfig 와 동일 JSON) ═══════════════════════ */
+const ACT = {SHIFT:"⇧",BACKSPACE:"⌫",SPACE:"space",ENTER:"↵",LANGUAGE:"한/A",SYMBOLS:"?123",
+  CTRL:"ctrl",ALT:"alt",CLIPBOARD:"📋",SNIPPETS:"✂",LEFT:"◀",RIGHT:"▶",UP:"▲",DOWN:"▼",
+  COMMA:",",PERIOD:".",SELECT_ALL:"전체",COPY:"복사",PASTE:"붙여",CUT:"잘라",UNDO:"되돌"};
+const CODE={TAB:"tab",ESC:"esc",DEL:"del",HOME:"home",END:"end",PGUP:"pgup",PGDN:"pgdn"};
+const ch=(k,w=1)=>({t:"char",k,out:k,w});
+const CH=s=>s.split(" ").map(x=>ch(x));
+const a=(act,w=0)=>({t:"act",act,l:ACT[act]||"",w});
+const kc=code=>({t:"code",code,l:CODE[code]});
+const edge=(s,w)=>{const r=CH(s);r[0].w=w;r[r.length-1].w=w;return r;};
+
+/* ═══════════════════════ 기능 정의 (터미널이라 부르지 않고 예시로 설명) ═══════════════════════ */
+const FEATURES=[
+  {id:"clip",  t:"클립보드 · 스니펫",   d:"복사한 내용·자주 쓰는 문구를 바로 꺼내 쓰기 (📋 ✂)", def:true},
+  {id:"arrow", t:"방향키",             d:"글자 사이를 정확히 오가기 (◀ ▶ ▲ ▼)", def:true},
+  {id:"edit",  t:"이동·편집 키",       d:"예: 줄 처음/끝(Home·End), 페이지 넘김, Esc, Tab, 앞 글자 지우기", def:true},
+  {id:"cpst",  t:"복사·붙여넣기 키",   d:"예: 전체선택 · 복사 · 붙여넣기 · 되돌리기를 한 번에", def:false},
+  {id:"numpad",t:"계산기식 넘패드",     d:"기호 자판 오른쪽에 7 8 9 / 같은 숫자패드", def:true},
+  {id:"mods",  t:"조합 키",           d:"예: Ctrl·Alt 를 눌러 단축키(원격 화면 등)에서 조합 입력", def:true},
+  {id:"nums",  t:"숫자 줄",           d:"글자 자판 위에 1~0 숫자 한 줄", def:true},
+  {id:"symrow",t:"기호 줄",           d:"글자 자판 위에 자주 쓰는 기호 한 줄 (' \" / \\ { } 등)", def:true},
+];
+
+/* ═══════════════════════ 1차: 기능 체크 → 프레임 생성 ═══════════════════════ */
+function functionRow(f){
+  const g=[];
+  if(f.edit){g.push(kc("TAB"),kc("DEL"),kc("HOME"),kc("END"),kc("PGUP"),kc("PGDN"),kc("ESC"));}
+  if(f.mods)g.push(a("ALT"));
+  if(f.clip)g.push(a("CLIPBOARD"),a("SNIPPETS"));
+  return g;
+}
+function actionRow(f){
+  const r=[];
+  if(f.mods)r.push(a("CTRL"));
+  r.push(a("SYMBOLS"),a("LANGUAGE"));
+  if(f.arrow)r.push(a("LEFT"));
+  r.push(a("SPACE",1.8));
+  if(f.arrow)r.push(a("UP"),a("DOWN"));
+  r.push(a("COMMA"),a("PERIOD"));
+  if(f.arrow)r.push(a("RIGHT"));
+  r.push(a("ENTER",1.5));
+  return r;
+}
+const homeRow=(s)=>{const r=CH(s);r[0].w=1.5;r[r.length-1].w=1.5;return r;};
+const bottomRow=(s)=>[a("SHIFT",1.5),...CH(s),a("BACKSPACE",1.5)];
+
+function buildLetter(main3,f){
+  const rows=[];
+  const fr=functionRow(f); if(fr.length)rows.push(fr);
+  if(f.symrow)rows.push(CH("' \" | / \\ { } [ ] _"));
+  if(f.nums)rows.push(CH("1 2 3 4 5 6 7 8 9 0"));
+  return [...rows,...main3,actionRow(f)];
+}
+function buildKorean(f){return buildLetter([
+  edge("ㅂ ㅈ ㄷ ㄱ ㅅ ㅛ ㅕ ㅑ ㅐ ㅔ",1.25),
+  homeRow("ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ"),
+  bottomRow("ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ")],f);}
+function buildEnglish(f){return buildLetter([
+  CH("q w e r t y u i o p"),
+  homeRow("a s d f g h j k l"),
+  bottomRow("z x c v b n m")],f);}
+function buildSymbols(f,placed){
+  // placed: 사용자가 2차에서 배치한 기호 3줄(각 6칸). 넘패드는 오른쪽에.
+  const L=placed||[["!","@","#","$","%","^"],["&","*","(",")","-","_"],["=","+","[","]","{"]];
+  const np=f.numpad;
+  const r1=[...L[0].map(x=>ch(x)), ...(np?CH("7 8 9 /"):CH("7 8 9 0"))];
+  const r2=[...L[1].map(x=>ch(x)), ...(np?CH("4 5 6 *"):CH("< > ? :"))];
+  const r3=[a("SHIFT",1),...L[2].map(x=>ch(x)), ...(np?CH("1 2 3 -"):CH("; ' \" ~"))];
+  const act=[...(f.mods?[a("CTRL")]:[]),a("SYMBOLS"),a("LANGUAGE"),a("COMMA"),
+    a("BACKSPACE",1.5),a("SPACE",2),ch("0",2),ch("."),a("ENTER",1.5)];
+  const rows=[];
+  const fr=functionRow(f); if(fr.length)rows.push(fr);
+  return [...rows,r1,r2,r3,act];
+}
+
+/* ═══════════════════════ 3차: 타자연습 문장 (분석 설계) ═══════════════════════ */
+// 각 언어마다 자판의 모든 글쇠를 고르게 눌러 유의미한 데이터가 나오게 설계.
+const DRILLS={
+  korean:[
+    "다람쥐 헌 쳇바퀴에 타고파",
+    "빨간 양말 신고 웃으며 걷자",
+    "찾을 꽃잎 몇 개를 꿰맸다",
+    "키읔 티읕 피읖 히읗 밟기"
+  ],
+  english:[
+    "the quick brown fox jumps over a lazy dog",
+    "pack my box with five dozen liquor jugs",
+    "sphinx of black quartz judge my vow"
+  ],
+  symbols:[
+    "( a + b ) * c - d / e",
+    "arr [ i ] = { x : 1 } ;",
+    "path = \" / usr \" ; y ? a : b"
+  ]
+};
+
+/* ═══════════════════════ 상태 ═══════════════════════ */
+const S={
+  profiles:["unfolded"],           // 진행할 프로파일들
+  pi:0,                            // 현재 프로파일 인덱스
+  stage:0,                         // 0 intro 1 profiles 2 features 3 symbols 4 practice 5 result
+  data:{},                        // profile -> { features, placed, stats:{mode:{key:{n,err}}}, layout }
+};
+function curProfile(){return S.profiles[S.pi];}
+function pdata(){return S.data[curProfile()]||(S.data[curProfile()]={features:defFeatures(),placed:null,stats:{},layout:null});}
+function defFeatures(){const o={};FEATURES.forEach(f=>o[f.id]=f.def);return o;}
+
+/* ═══════════════════════ 렌더 셸 ═══════════════════════ */
+const screen=document.getElementById("screen");
+const stepsEl=document.getElementById("steps");
+const ctxEl=document.getElementById("ctx");
+const STEP_NAMES=["시작","프로파일","① 기능","② 기호 배치","③ 타자연습","완성"];
+function renderShell(){
+  stepsEl.innerHTML="";
+  STEP_NAMES.forEach((nm,i)=>{
+    const d=document.createElement("div");
+    d.className="step"+(i===S.stage?" on":i<S.stage?" done":"");
+    d.innerHTML=`<span class="n">${i<S.stage?"✓":i}</span>${nm}`;
+    stepsEl.append(d);
+  });
+  if(S.stage>=2&&S.stage<=4){
+    const pf=curProfile()==="folded"?"접었을 때":"펼쳤을 때";
+    ctxEl.innerHTML=`지금 만드는 중: <b>${pf}</b> 프로파일 (${S.pi+1}/${S.profiles.length})`;
+  } else ctxEl.textContent="";
+}
+function nav(html){screen.innerHTML=html;renderShell();}
+function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");
+  clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove("show"),1800);}
+
+/* ═══════════════════════ 0 인트로 ═══════════════════════ */
+function stageIntro(){
+  S.stage=0;
+  nav(`<div class="card">
+    <h2>이 마법사가 하는 일</h2>
+    <p class="note">화면의 기본 자판은 그냥 출발점이에요. 아래 순서로 <b>당신 손에 맞는</b> 자판을 만듭니다.</p>
+    <ol style="margin:0;padding-left:20px;font-size:14px;line-height:2">
+      <li><b>기능 고르기</b> — 클립보드·방향키·넘패드 등 필요한 것만 켜서 1차 배열을 만들어요.</li>
+      <li><b>기호 배치</b> — 괄호·따옴표 같은 특수문자를 원하는 자리에 직접 놓아요.</li>
+      <li><b>타자연습</b> — 설계된 문장을 따라 치면, 자주 틀리는 키를 찾아 <b>키 크기까지</b> 당신에게 맞춰요.</li>
+    </ol>
+    <p class="note" style="margin-top:14px">한글·영어·기호, 그리고 접었을 때/펼쳤을 때를 <b>각각 따로</b> 기록하고 보정합니다.</p>
+    <div class="btnrow"><span class="spacer"></span>
+      <button class="ghost" id="theme">◐ 테마</button>
+      <button class="primary" id="go">시작하기 →</button></div>
+  </div>`);
+  document.getElementById("go").onclick=stageProfiles;
+  document.getElementById("theme").onclick=toggleTheme;
+}
+
+/* ═══════════════════════ 1 프로파일 선택 ═══════════════════════ */
+function stageProfiles(){
+  S.stage=1;
+  const has=n=>S.profiles.includes(n);
+  nav(`<div class="card">
+    <h2>어떤 화면에서 쓰나요?</h2>
+    <p class="note">폴드는 접었을 때(커버)와 펼쳤을 때(메인) 크기가 달라, 자판도 따로 맞추는 게 좋아요. 필요한 것만 고르세요 — 각각 순서대로 만듭니다.</p>
+    <div class="checks">
+      <label class="chk ${has('unfolded')?'on':''}"><input type="checkbox" id="p-un" ${has('unfolded')?'checked':''}>
+        <div><div class="t">펼쳤을 때 (메인 화면)</div><div class="d">넓은 화면. 보조줄·넘패드까지 넉넉히.</div></div></label>
+      <label class="chk ${has('folded')?'on':''}"><input type="checkbox" id="p-fo" ${has('folded')?'checked':''}>
+        <div><div class="t">접었을 때 (커버 화면)</div><div class="d">좁은 화면. 꼭 필요한 것만 간결하게.</div></div></label>
+    </div>
+    <div class="btnrow"><button class="ghost" id="back">← 뒤로</button><span class="spacer"></span>
+      <button class="primary" id="go">다음 →</button></div>
+  </div>`);
+  const sync=()=>{
+    const p=[];
+    if(document.getElementById("p-un").checked)p.push("unfolded");
+    if(document.getElementById("p-fo").checked)p.push("folded");
+    S.profiles=p.length?p:["unfolded"];
+    document.querySelectorAll(".chk").forEach((el,i)=>el.classList.toggle("on",el.querySelector("input").checked));
+    document.getElementById("go").disabled=p.length===0;
+  };
+  document.getElementById("p-un").onchange=sync;
+  document.getElementById("p-fo").onchange=sync;
+  document.getElementById("back").onclick=stageIntro;
+  document.getElementById("go").onclick=()=>{S.pi=0;stageFeatures();};
+  sync();
+}
+
+/* ═══════════════════════ 2 기능 체크 → 1차 프레임 ═══════════════════════ */
+function stageFeatures(){
+  S.stage=2;renderShell();
+  const f=pdata().features;
+  const cards=FEATURES.map(ft=>`<label class="chk ${f[ft.id]?'on':''}" data-id="${ft.id}">
+    <input type="checkbox" ${f[ft.id]?'checked':''}>
+    <div><div class="t">${ft.t}</div><div class="d">${ft.d}</div></div></label>`).join("");
+  nav(`<div class="card">
+    <h2>① 필요한 기능을 고르세요</h2>
+    <p class="note">고른 기능만으로 1차 배열을 만듭니다. 오른쪽 미리보기가 바로 바뀌어요.</p>
+    <div class="checks">${cards}</div>
+  </div>
+  <div class="card"><h2>미리보기 (참고용 프레임)</h2>
+    <p class="note">지금은 형태만 봅니다. 위치·크기는 다음 단계에서 당신에게 맞춰집니다.</p>
+    <div class="modes" id="pv-modes">
+      <button class="on" data-m="korean">한글</button>
+      <button data-m="english">영문</button>
+      <button data-m="symbols">기호</button></div>
+    <div class="board" id="pv"></div>
+    <div class="btnrow"><button class="ghost" id="back">← 뒤로</button><span class="spacer"></span>
+      <button class="primary" id="go">기호 배치로 →</button></div>
+  </div>`);
+  let pvMode="korean";
+  const drawPv=()=>drawBoard(document.getElementById("pv"),layoutFor(pvMode,pdata()),null);
+  document.querySelectorAll("#pv-modes button").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll("#pv-modes button").forEach(x=>x.classList.toggle("on",x===b));
+    pvMode=b.dataset.m;drawPv();});
+  document.querySelectorAll(".chk[data-id]").forEach(el=>el.querySelector("input").onchange=e=>{
+    f[el.dataset.id]=e.target.checked;el.classList.toggle("on",e.target.checked);drawPv();});
+  document.getElementById("back").onclick=()=>{S.pi>0?(S.pi--,stageResultOrNext(true)):stageProfiles();};
+  document.getElementById("go").onclick=stageSymbols;
+  drawPv();
+}
+
+/* ═══════════════════════ 3 기호 배치 ═══════════════════════ */
+const SYM_POOL="! @ # $ % ^ & * ( ) - _ = + [ ] { } < > : ; ' \" ~ ` | \\ ? /".split(" ");
+function stageSymbols(){
+  S.stage=3;renderShell();
+  const pd=pdata();
+  if(!pd.placed)pd.placed=[["!","@","#","$","%","^"],["&","*","(",")","-","_"],["=","+","[","]","{"]];
+  let selCell=null; // [row,col]
+  nav(`<div class="card">
+    <h2>② 특수문자를 원하는 자리에 놓으세요</h2>
+    <p class="note">기호 자판 왼쪽 3줄(각 6칸)입니다. 칸을 누르고 아래 팔레트에서 기호를 고르면 그 자리에 들어갑니다. 오른쪽은 ${pd.features.numpad?'넘패드':'보조 기호'}로 자동 채워집니다.</p>
+    <div class="board" id="symb"></div>
+    <div class="palette" id="pal"></div>
+    <div class="btnrow"><button class="ghost" id="back">← 뒤로</button><span class="spacer"></span>
+      <button class="primary" id="go">타자연습으로 →</button></div>
+  </div>`);
+  const draw=()=>{
+    const host=document.getElementById("symb");host.innerHTML="";
+    pd.placed.forEach((row,r)=>{
+      const rowEl=document.createElement("div");rowEl.className="krow";rowEl.style.minWidth="330px";
+      row.forEach((k,c)=>{
+        const el=document.createElement("div");el.className="key hot"+(selCell&&selCell[0]===r&&selCell[1]===c?" next":"");
+        el.textContent=k;el.style.flexGrow=1;
+        el.onclick=()=>{selCell=[r,c];draw();};
+        rowEl.append(el);
+      });
+      host.append(rowEl);
+    });
+    const pal=document.getElementById("pal");pal.innerHTML="";
+    SYM_POOL.forEach(s=>{const b=document.createElement("button");b.textContent=s;
+      b.onclick=()=>{if(!selCell){toast("먼저 넣을 칸을 누르세요");return;}
+        pd.placed[selCell[0]][selCell[1]]=s;draw();};pal.append(b);});
+  };
+  draw();
+  document.getElementById("back").onclick=stageFeatures;
+  document.getElementById("go").onclick=()=>startPractice();
+}
+
+/* ═══════════════════════ 4 타자연습 (언어별) ═══════════════════════ */
+let practice=null;
+function startPractice(){
+  S.stage=4;renderShell();
+  const modes=["korean","english","symbols"];
+  practice={mi:0,modes,di:0,pos:0,errThisChar:false,started:0,keystrokes:0,errors:0};
+  pdata().stats={};
+  runPractice();
+}
+function practiceLayout(){return layoutFor(practice.modes[practice.mi],pdata());}
+function targetText(){return DRILLS[practice.modes[practice.mi]][practice.di];}
+function runPractice(){
+  const mode=practice.modes[practice.mi];
+  const modeName={korean:"한글",english:"영어",symbols:"기호"}[mode];
+  nav(`<div class="card">
+    <h2>③ 타자연습 — ${modeName}</h2>
+    <p class="note">아래 문장을 화면 자판으로 따라 치세요. 다음에 칠 키가 <b style="color:var(--accent)">초록 테두리</b>로 표시됩니다. 틀리게 누르면 그 키를 ‘어려운 키’로 기록해요. (문장 ${practice.di+1}/${DRILLS[mode].length})</p>
+    <div class="type-target" id="tgt"></div>
+    <div class="prog"><i id="bar"></i></div>
+    <div class="stat"><span>친 키 <b id="ks">0</b></span><span>오타 <b id="es">0</b></span><span>정확도 <b id="acc">100%</b></span></div>
+    <div class="board" id="pb"></div>
+    <div class="btnrow"><button class="ghost" id="skip">이 문장 건너뛰기</button><span class="spacer"></span>
+      <span class="note" id="hint">키를 눌러 시작하세요</span></div>
+  </div>`);
+  drawTarget();drawPractice();
+  document.getElementById("skip").onclick=nextDrill;
+}
+function drawTarget(){
+  const t=targetText();const el=document.getElementById("tgt");el.innerHTML="";
+  [...t].forEach((cchar,i)=>{
+    const sp=document.createElement("span");sp.textContent=cchar===" "?"␣":cchar;
+    if(i<practice.pos)sp.className="done";
+    else if(i===practice.pos)sp.className=practice.errThisChar?"err":"cur";
+    el.append(sp);
+  });
+  const bar=document.getElementById("bar");if(bar)bar.style.width=(practice.pos/targetText().length*100)+"%";
+}
+function expectedChar(){const t=targetText();return t[practice.pos];}
+// 화면 자판에서 목표 글자를 담은 키를 찾는다(문자 키만).
+function keyMatchesChar(key,cchar){
+  if(cchar===" ")return key.t==="act"&&key.act==="SPACE";
+  return key.t==="char"&&key.out===cchar;
+}
+function drawPractice(){
+  const host=document.getElementById("pb");const layout=practiceLayout();
+  const cchar=expectedChar();
+  drawBoard(host,layout,(key,el,r,c)=>{
+    if(cchar!=null&&keyMatchesChar(key,cchar))el.classList.add("next");
+    if(key.t==="char"||(key.t==="act"&&key.act==="SPACE")){
+      el.classList.add("hot");
+      el.onclick=()=>onPracticeTap(key);
+    }
+  });
+}
+function statKey(){return practice.modes[practice.mi];}
+function bump(keyLabel,isErr){
+  const st=pdata().stats;const m=statKey();const s=(st[m]||(st[m]={}));
+  const e=s[keyLabel]||(s[keyLabel]={n:0,err:0});e.n++;if(isErr)e.err++;
+}
+function onPracticeTap(key){
+  const cchar=expectedChar();
+  if(cchar==null)return;
+  const correct=keyMatchesChar(key,cchar);
+  const label=(key.t==="char")?key.out:key.act;
+  practice.keystrokes++;
+  if(correct){
+    // 이번 글자를 틀렸다가 맞춘 경우 목표 키에 오류 1 기록(이미 위에서), 진행.
+    bump(label,false);
+    practice.pos++;practice.errThisChar=false;
+    if(practice.pos>=targetText().length){finishDrill();return;}
+  }else{
+    // 오타: 목표 키(정타 자리)에 오류 기록 + 실제 누른 키도 시도로.
+    practice.errors++;practice.errThisChar=true;
+    const tgtKey=findCharKey(practiceLayout(),cchar);
+    if(tgtKey)bump(tgtKey,true);
+    bump(label,false);
+  }
+  drawTarget();drawPractice();updateStats();
+}
+function findCharKey(layout,cchar){
+  for(const row of layout)for(const k of row){
+    if(cchar===" "&&k.t==="act"&&k.act==="SPACE")return "SPACE";
+    if(k.t==="char"&&k.out===cchar)return k.out;
+  }
+  return null;
+}
+function updateStats(){
+  const ks=document.getElementById("ks");if(!ks)return;
+  ks.textContent=practice.keystrokes;
+  document.getElementById("es").textContent=practice.errors;
+  const acc=practice.keystrokes?Math.round((1-practice.errors/practice.keystrokes)*100):100;
+  document.getElementById("acc").textContent=acc+"%";
+}
+function finishDrill(){nextDrill();}
+function nextDrill(){
+  practice.pos=0;practice.errThisChar=false;
+  practice.di++;
+  if(practice.di>=DRILLS[practice.modes[practice.mi]].length){
+    practice.di=0;practice.mi++;
+    if(practice.mi>=practice.modes.length){finishProfilePractice();return;}
+  }
+  runPractice();
+}
+function finishProfilePractice(){
+  // 오타 데이터로 키 크기 보정 → 이 프로파일의 최종 레이아웃 생성.
+  const pd=pdata();
+  pd.layout={
+    korean:applySizing(layoutFor("korean",pd),pd.stats.korean),
+    english:applySizing(layoutFor("english",pd),pd.stats.english),
+    symbols:applySizing(layoutFor("symbols",pd),pd.stats.symbols),
+  };
+  stageResultOrNext(false);
+}
+
+/* ═══════════════════════ 키 크기 보정 (오타율 → 폭) ═══════════════════════ */
+// 오타율이 높은 글자 키를 넓힌다(최대 +60%). 시각적으로 즉시 달라진다.
+function applySizing(layout,stat){
+  if(!stat)return layout;
+  return layout.map(row=>row.map(k=>{
+    if(k.t!=="char")return k;
+    const s=stat[k.out];if(!s||s.n<2)return k;
+    const rate=s.err/(s.n+s.err);
+    const w=Math.round((1+Math.min(rate,0.5)*1.2)*100)/100; // 1.0 ~ 1.6
+    return {...k,w:Math.max(w,k.w||1)};
+  }));
+}
+
+/* ═══════════════════════ 5 결과 / 다음 프로파일 ═══════════════════════ */
+function stageResultOrNext(goingBack){
+  if(!goingBack&&S.pi<S.profiles.length-1){
+    // 다음 프로파일로.
+    S.pi++;
+    // 다음 프로파일 안내 카드
+    S.stage=2;renderShell();
+    const pf=curProfile()==="folded"?"접었을 때":"펼쳤을 때";
+    nav(`<div class="card"><h2>${pf} 프로파일을 이어서 만들게요</h2>
+      <p class="note">같은 순서(기능 → 기호 → 타자연습)로 이 화면에 맞춰 진행합니다.</p>
+      <div class="btnrow"><span class="spacer"></span><button class="primary" id="go">시작 →</button></div></div>`);
+    document.getElementById("go").onclick=stageFeatures;
+    return;
+  }
+  stageResult();
+}
+function stageResult(){
+  S.stage=5;renderShell();ctxEl.textContent="";
+  const json=buildFinalJson();
+  const first=S.profiles[0];
+  nav(`<div class="card">
+    <h2>완성됐어요 — 당신의 맞춤 자판</h2>
+    <p class="note">아래는 보정된 미리보기입니다. 자주 틀린 키가 넓어졌어요. 색이 진할수록 오타가 잦았던 키입니다.</p>
+    <div class="modes" id="rm"></div>
+    <div class="board" id="rb"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--heat0)"></i>정확</span>
+      <span><i class="sw" style="background:var(--heat1)"></i>가끔 오타</span>
+      <span><i class="sw" style="background:var(--heat2)"></i>자주 오타</span>
+      <span><i class="sw" style="background:var(--heat3)"></i>많이 오타 → 넓힘</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2>앱에 적용하기</h2>
+    <p class="note">아래 JSON 을 복사해 키보드 앱의 <code class="i">설정 → 레이아웃 편집</code> 에 붙여넣고 <b>적용</b> 하세요. 접었을 때/펼쳤을 때가 함께 들어 있습니다.</p>
+    <textarea id="json" spellcheck="false"></textarea>
+    <div class="btnrow">
+      <button class="ghost" id="restart">처음부터 다시</button>
+      <span class="spacer"></span>
+      <button id="dl">파일로 저장</button>
+      <button class="primary" id="copy">JSON 복사</button>
+    </div>
+  </div>`);
+  document.getElementById("json").value=json;
+  // 미리보기 모드/프로파일
+  let rmProfile=first, rmMode="korean";
+  const rm=document.getElementById("rm");
+  const mkBtns=()=>{
+    rm.innerHTML="";
+    S.profiles.forEach(p=>{const b=document.createElement("button");
+      b.textContent=p==="folded"?"접힘":"펼침";b.className=p===rmProfile?"on":"";
+      b.onclick=()=>{rmProfile=p;mkBtns();drawR();};rm.append(b);});
+    rm.append(document.createElement("span")).style.width="10px";
+    ["korean","english","symbols"].forEach(m=>{const b=document.createElement("button");
+      b.textContent={korean:"한글",english:"영문",symbols:"기호"}[m];b.className=m===rmMode?"on":"";
+      b.onclick=()=>{rmMode=m;mkBtns();drawR();};rm.append(b);});
+  };
+  const drawR=()=>{
+    const lay=S.data[rmProfile].layout[rmMode];
+    const stat=(S.data[rmProfile].stats||{})[rmMode]||{};
+    drawBoard(document.getElementById("rb"),lay,(key,el)=>{
+      if(key.t==="char"){const s=stat[key.out];
+        if(s&&s.n>=2){const rate=s.err/(s.n+s.err);
+          el.style.background=rate>0.33?"var(--heat3)":rate>0.15?"var(--heat2)":rate>0.05?"var(--heat1)":"var(--heat0)";
+        }}
+    });
+  };
+  mkBtns();drawR();
+  document.getElementById("copy").onclick=async()=>{
+    try{await navigator.clipboard.writeText(json);toast("JSON 을 복사했습니다");}
+    catch{const t=document.getElementById("json");t.select();document.execCommand("copy");toast("복사했습니다");}
+  };
+  document.getElementById("dl").onclick=()=>{
+    const blob=new Blob([json],{type:"application/json"});
+    const u=URL.createObjectURL(blob);const aEl=document.createElement("a");
+    aEl.href=u;aEl.download="my-keyboard.json";aEl.click();URL.revokeObjectURL(u);
+  };
+  document.getElementById("restart").onclick=()=>{S.data={};S.pi=0;S.profiles=["unfolded"];stageIntro();};
+}
+
+/* ═══════════════════════ 레이아웃 조회 & JSON ═══════════════════════ */
+function layoutFor(mode,pd){
+  const f=pd.features;
+  if(mode==="korean")return buildKorean(f);
+  if(mode==="english")return buildEnglish(f);
+  return buildSymbols(f,pd.placed);
+}
+function keyToJson(k){
+  if(k.t==="char"){if(k.out===k.k&&(k.w===1||k.w==null))return k.k;
+    const o={k:k.k};if(k.out!==k.k)o.out=k.out;if(k.w!==1)o.w=k.w;return o;}
+  if(k.t==="act"){const o={act:k.act};if(k.l)o.l=k.l;if(k.w>0)o.w=k.w;return o;}
+  return {code:k.code,l:k.l};
+}
+function modesJson(layout){const o={};for(const m of["korean","english","symbols"])
+  o[m]=layout[m].map(r=>r.map(keyToJson));return o;}
+function buildFinalJson(){
+  const out={};
+  for(const p of S.profiles){
+    const pd=S.data[p];
+    const lay=pd.layout||{korean:layoutFor("korean",pd),english:layoutFor("english",pd),symbols:layoutFor("symbols",pd)};
+    out[p==="folded"?"folded":"unfolded"]=modesJson(lay);
+  }
+  // 한쪽만 만들었으면 반대쪽은 같은 걸로 채워 앱이 항상 동작하게.
+  if(!out.unfolded)out.unfolded=out.folded;
+  if(!out.folded)out.folded=out.unfolded;
+  return JSON.stringify(out,null,2);
+}
+
+/* ═══════════════════════ 보드 그리기 ═══════════════════════ */
+function keyLabel(k){return k.t==="char"?k.k:k.t==="act"?(k.l||k.act):(k.l||k.code);}
+function defW(k){if(k.t!=="act")return k.w||1;
+  if(k.act==="SPACE")return 1.8;if(k.act==="ENTER")return 1.5;
+  if(k.act==="SHIFT"||k.act==="BACKSPACE")return 1.5;return 1;}
+function drawBoard(host,layout,deco){
+  host.innerHTML="";
+  layout.forEach((row,r)=>{
+    const rowEl=document.createElement("div");rowEl.className="krow";
+    row.forEach((k,c)=>{
+      const el=document.createElement("div");
+      el.className="key"+(k.t==="act"?" k-act":k.t==="code"?" k-code":"");
+      el.textContent=keyLabel(k);
+      el.style.flexGrow=(k.t==="act"?defW(k):(k.w||1));
+      if(deco)deco(k,el,r,c);
+      rowEl.append(el);
+    });
+    host.append(rowEl);
+  });
+}
+
+/* ═══════════════════════ 테마 ═══════════════════════ */
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute("data-theme");
+  const dark=cur?cur==="dark":matchMedia("(prefers-color-scheme:dark)").matches;
+  document.documentElement.setAttribute("data-theme",dark?"light":"dark");
+}
+
+stageIntro();
+</script>
