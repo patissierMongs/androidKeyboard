@@ -85,6 +85,8 @@ class ImeService : InputMethodService(),
     private var foldedProfile by mutableStateOf(false)
     // 선택 모드: 켜져 있는 동안 커서 이동 키에 Shift 를 실어 텍스트를 선택한다.
     private var selectActive by mutableStateOf(false)
+    // 길게 누름 인식 시간(ms) — 반복 시작 지연·대체키 발동. 앱 설정(전역).
+    private var holdMs by mutableStateOf(400L)
     // 에디터에 선택영역이 있는지(onUpdateSelection 으로 추적). 조합 입력 전에
     // 선택영역을 명시적으로 지우는 데 쓴다.
     private var hasSelection = false
@@ -123,6 +125,7 @@ class ImeService : InputMethodService(),
                 key == null -> Unit
                 key == KEY_SNIPPETS -> loadSnippets()
                 key == KEY_CUSTOM_LAYOUT -> loadCustomLayout()
+                key == KEY_HOLD_MS -> holdMs = prefs.getInt(KEY_HOLD_MS, 400).toLong()
                 // 설정 앱에서 '초기화'로 지웠을 때만 리셋(자체 저장은 무시).
                 key == KEY_TYPO_STATS ->
                     if (prefs.getString(KEY_TYPO_STATS, null) == null) typoTrackers.clear()
@@ -189,7 +192,9 @@ class ImeService : InputMethodService(),
                     onCharTouch = ::onCharTouch,
                     // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다(현재 레이아웃 버킷).
                     confusionBoost = { from, to -> typo().confusionCount(from, to) >= 10 },
-                    customRows = customLayouts.forFolded(foldedProfile)
+                    customRows = customLayouts.forFolded(foldedProfile),
+                    centerKeys = customLayouts.centerForFolded(foldedProfile),
+                    holdMs = holdMs
                 )
             }
         }
@@ -225,6 +230,8 @@ class ImeService : InputMethodService(),
         auxRows = runCatching {
             AuxRows.valueOf(prefs.getString(p + KEY_AUX_ROWS, null) ?: "")
         }.getOrDefault(if (folded) AuxRows.TERMINAL else AuxRows.ALL)
+        // 프로파일과 무관한 전역 설정도 여기서 함께 갱신한다.
+        holdMs = prefs.getInt(KEY_HOLD_MS, 400).toLong()
     }
 
     /** 키보드가 떠 있는 채로 접거나 펼치면 즉시 해당 프로파일로 전환. */
@@ -519,6 +526,9 @@ class ImeService : InputMethodService(),
                 if (centerMode == CenterMode.SNIPPETS) CenterMode.CURSOR
                 else CenterMode.SNIPPETS
 
+            // 선택 모드 토글(커스텀 센터 패드의 '선택' 버튼).
+            ActionType.SELECT -> selectActive = !selectActive
+
             // 전체선택/복사/붙여넣기/잘라내기/되돌리기: Ctrl 조합 키 이벤트를
             // 그대로 전송(원격/터미널에서도 동작). 실행 후 선택 모드는 해제.
             ActionType.SELECT_ALL -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_A)
@@ -772,6 +782,7 @@ class ImeService : InputMethodService(),
         const val KEY_SNIPPETS = "snippets"
         const val KEY_TYPO_STATS = "typo_stats"
         const val KEY_CUSTOM_LAYOUT = "custom_layout"
+        const val KEY_HOLD_MS = "hold_ms"
 
         // 선택(Shift)을 실을 수 있는 커서 이동 키. 그 외 키는 선택 모드를 해제한다.
         val MOVEMENT_CODES = setOf(

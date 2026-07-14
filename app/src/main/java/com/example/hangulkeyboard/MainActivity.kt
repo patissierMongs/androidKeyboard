@@ -139,6 +139,10 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
 
         HorizontalDivider()
 
+        HoldTimeSection(prefs)
+
+        HorizontalDivider()
+
         SnippetSection(prefs)
 
         HorizontalDivider()
@@ -154,6 +158,33 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
             value = testText,
             onValueChange = { testText = it },
             label = { Text("테스트 입력") },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/** 길게 누름 인식 시간(전역). 반복 키 시작 지연·대체키(길게 눌러 입력) 발동에 쓴다. */
+@Composable
+private fun HoldTimeSection(prefs: SharedPreferences) {
+    var hold by remember { mutableFloatStateOf(prefs.getInt("hold_ms", 400).toFloat()) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("길게 누름 시간", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "백스페이스·방향키의 반복 시작과 대체키(키를 길게 눌러 다른 문자 입력)가\n" +
+                "발동하기까지의 시간입니다. 접힘/펼침 공통.",
+            fontSize = 13.sp
+        )
+        Text("${hold.roundToInt()} ms", fontSize = 14.sp)
+        Slider(
+            value = hold,
+            onValueChange = { hold = it },
+            onValueChangeFinished = {
+                prefs.edit().putInt("hold_ms", hold.roundToInt()).apply()
+            },
+            valueRange = 150f..800f,
             modifier = Modifier.fillMaxWidth()
         )
     }
@@ -401,6 +432,7 @@ private fun SplitPreview(
     keyHeight: Float,
     auxRows: AuxRows,
     custom: Map<KeyboardMode, List<List<Key>>>,
+    centerKeys: List<List<Key>> = emptyList(),
 ) {
     Box(
         modifier = Modifier
@@ -424,6 +456,7 @@ private fun SplitPreview(
             onKey = {}, onKeyLong = {}, onPaste = {},
             onClipLong = {}, onSnippetLong = {}, onToggleSelect = {},
             customRows = custom,
+            centerKeys = centerKeys,
         )
         // 분할 지점 표시선: 줄이 나뉘는 대략적 가로 위치(splitRatio)에 세로선.
         if (splitGap > 0f) {
@@ -459,10 +492,10 @@ private fun ProfileSection(
                 .getOrDefault(defaultAux)
         )
     }
-    // 이 프로파일의 커스텀 배열(미리보기용). 없으면 기본 배열.
-    val custom = remember {
-        LayoutConfig.parse(prefs.getString("custom_layout", null)).forFolded(prefix == "folded_")
-    }
+    // 이 프로파일의 커스텀 배열·센터 패드(미리보기용). 없으면 기본값.
+    val customAll = remember { LayoutConfig.parse(prefs.getString("custom_layout", null)) }
+    val custom = customAll.forFolded(prefix == "folded_")
+    val centerKeys = customAll.centerForFolded(prefix == "folded_")
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -477,7 +510,7 @@ private fun ProfileSection(
             onValueChangeFinished = {
                 prefs.edit().putFloat(prefix + "split_gap", split).apply()
             },
-            valueRange = 0f..4f,
+            valueRange = 0f..6f,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -490,7 +523,7 @@ private fun ProfileSection(
                 onValueChangeFinished = {
                     prefs.edit().putFloat(prefix + "split_ratio", ratio).apply()
                 },
-                valueRange = 0.2f..0.8f,
+                valueRange = 0.1f..0.9f,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -503,6 +536,7 @@ private fun ProfileSection(
             keyHeight = height,
             auxRows = aux,
             custom = custom,
+            centerKeys = centerKeys,
         )
 
         Text("키 높이: ${"%.0f".format(height)} dp", fontSize = 14.sp)
@@ -512,7 +546,7 @@ private fun ProfileSection(
             onValueChangeFinished = {
                 prefs.edit().putFloat(prefix + "key_height", height).apply()
             },
-            valueRange = 44f..64f,
+            valueRange = 33f..96f,
             modifier = Modifier.fillMaxWidth()
         )
 

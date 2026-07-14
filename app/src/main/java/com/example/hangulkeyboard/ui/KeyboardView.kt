@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -103,6 +104,10 @@ private val DarkKbColors = KbColors(
 
 private val LocalKb = staticCompositionLocalOf { LightKbColors }
 
+// 길게 누름 인식 시간(ms). 반복 키의 시작 지연과 대체키(alt) 발동에 함께 쓴다.
+private val LocalHoldMs = compositionLocalOf { 400L }
+private const val REPEAT_INTERVAL_MS = 45L
+
 /**
  * 키보드 전체 뷰. 상태(mode/shift)는 호출자가 소유하고,
  * 키 입력은 [onKey] 콜백으로 전달한다.
@@ -139,6 +144,10 @@ fun KeyboardView(
     confusionBoost: (String, String) -> Boolean = { _, _ -> false },
     // 사용자 커스텀 레이아웃(있으면 기본 배열 대신). 모드별 행 목록.
     customRows: Map<KeyboardMode, List<List<Key>>> = emptyMap(),
+    // 분할 가운데 커서 패드의 커스텀 버튼(아래줄부터). 비면 기본 패드.
+    centerKeys: List<List<Key>> = emptyList(),
+    // 길게 누름 인식 시간(ms) — 반복 시작 지연·대체키 발동에 공통.
+    holdMs: Long = 400L,
 ) {
     val shifted = shiftState != ShiftState.OFF
     // 분할이면 액션줄 방향키를 빼고 특수문자를 둔다(가운데 미니 방향키가 대신함).
@@ -164,7 +173,7 @@ fun KeyboardView(
     val maxPage = if (longest == 0) 0 else (longest - 1) / perPage
 
     val colors = if (isSystemInDarkTheme()) DarkKbColors else LightKbColors
-    CompositionLocalProvider(LocalKb provides colors) {
+    CompositionLocalProvider(LocalKb provides colors, LocalHoldMs provides holdMs) {
         Surface(color = colors.bg) {
             Column(
                 modifier = Modifier
@@ -183,8 +192,8 @@ fun KeyboardView(
                 }
                 rows.forEachIndexed { index, keys ->
                     val compact = index < compactCount
-                    // 분할: 줄 가운데(weight 절반 지점)에 공백을 끼운다. 키 폭은 그대로,
-                    // 공백에 붙은 안쪽 키만 살짝 넓힌다(ㅅ·ㅛ 오터치 보정).
+                    // 분할: 줄 가운데(weight 기준 ratio 지점)에 공백을 끼운다.
+                    // 키 폭·배치는 설정 그대로 유지한다.
                     val rowKeys = if (splitGap > 0f) splitWithGap(keys, splitGap, splitRatio) else keys
                     KeyRow(
                         keys = rowKeys,
@@ -206,6 +215,7 @@ fun KeyboardView(
                                     rowFromBottom = rows.size - 1 - index,
                                     rowFromTop = index,
                                     listMode = slotListMode,
+                                    centerKeys = centerKeys,
                                     clips = clips,
                                     snippets = snippets,
                                     selectActive = selectActive,
@@ -229,9 +239,9 @@ fun KeyboardView(
 }
 
 /**
- * 줄을 weight 누적 합이 절반에 가장 가까운 지점에서 나눠 [gap] 공백을 끼운다.
- * 동률이면 뒤쪽 지점을 택해 왼손 글쇠(ㅎ·ㅍ, g 등)가 왼쪽 블록에 남게 한다.
- * 공백에 붙은 안쪽 글자 키(ㅅ·ㅛ 등)는 +0.25 넓혀 오터치를 줄인다.
+ * 줄을 weight 누적 합이 [ratio] 지점에 가장 가까운 키 경계에서 나눠 [gap]
+ * 공백(가운데 칸)을 끼운다. 동률이면 뒤쪽 지점을 택해 왼손 글쇠(ㅎ·ㅍ, g 등)가
+ * 왼쪽 블록에 남게 한다. 키 폭은 설정된 값 그대로 유지한다(넓히지 않는다).
  */
 private fun splitWithGap(keys: List<Key>, gap: Float, ratio: Float): List<Key> {
     val total = keys.sumOf { keyWeight(it).toDouble() }
@@ -248,10 +258,7 @@ private fun splitWithGap(keys: List<Key>, gap: Float, ratio: Float): List<Key> {
             best = i + 1
         }
     }
-    fun widen(k: Key): Key = if (k is Key.Char) k.copy(weight = k.weight + 0.25f) else k
-    return keys.subList(0, best - 1) + widen(keys[best - 1]) +
-        Key.Gap(gap) +
-        widen(keys[best]) + keys.subList(best + 1, keys.size)
+    return keys.subList(0, best) + Key.Gap(gap, center = true) + keys.subList(best, keys.size)
 }
 
 @Composable
@@ -275,7 +282,9 @@ private fun KeyRow(
     Row(modifier = Modifier.fillMaxWidth()) {
         keys.forEachIndexed { i, key ->
             if (key is Key.Gap) {
-                if (gapContent != null) {
+                // 가운데 칸(분할이 끼운 것)만 내용을 채우고, 사용자가 배열에 넣은
+                // 빈 공간 키는 그냥 비워 둔다.
+                if (key.center && gapContent != null) {
                     // 빈 칸도 그 줄의 키와 같은 높이의 셀 — 내용이 줄에 맞춰 박힌다.
                     // 좌우 10dp 는 글자 키와의 오터치 방지용 데드존.
                     Box(
@@ -327,6 +336,7 @@ private fun CenterSlot(
     rowFromBottom: Int,
     rowFromTop: Int,
     listMode: Boolean,
+    centerKeys: List<List<Key>>,
     clips: List<String>,
     snippets: List<String>,
     selectActive: Boolean,
@@ -370,6 +380,28 @@ private fun CenterSlot(
         }
         return
     }
+    // 커스텀 센터 패드(레이아웃 JSON 의 "center", 아래줄부터). 있으면 기본 패드 대신.
+    if (centerKeys.isNotEmpty()) {
+        val rowKeys = centerKeys.getOrNull(rowFromBottom).orEmpty()
+        Row(modifier = Modifier.fillMaxSize()) {
+            // 한 줄에 버튼이 하나면 가운데 2/3 폭만 차지(오터치 완화, 기본 '선택'과 동일).
+            if (rowKeys.size == 1) Spacer(Modifier.weight(0.25f))
+            rowKeys.forEach { k ->
+                val isSelect = k is Key.Action && k.type == ActionType.SELECT
+                val repeatable = k is Key.Action && k.type in setOf(
+                    ActionType.LEFT, ActionType.RIGHT, ActionType.UP, ActionType.DOWN,
+                    ActionType.BACKSPACE
+                )
+                MiniKey(
+                    label = miniLabel(k),
+                    active = isSelect && selectActive,
+                    repeatable = repeatable
+                ) { if (isSelect) onToggleSelect() else onKey(k) }
+            }
+            if (rowKeys.size == 1) Spacer(Modifier.weight(0.25f))
+        }
+        return
+    }
     Row(modifier = Modifier.fillMaxSize()) {
         when (rowFromBottom) {
             // 선택 토글은 칸 전체 대신 가운데 2/3 폭만 차지(오터치 완화).
@@ -401,6 +433,14 @@ private fun CenterSlot(
             }
         }
     }
+}
+
+/** 센터 패드 미니 키의 라벨(커스텀 "center" 버튼용). */
+private fun miniLabel(key: Key): String = when (key) {
+    is Key.Char -> key.label
+    is Key.KeyCode -> key.label
+    is Key.Action -> key.label.ifEmpty { key.type.name.lowercase() }
+    is Key.Gap -> ""
 }
 
 /** 목록 모드의 한쪽 열 셀. 항목이 없으면 첫 줄에만 열 이름 힌트를 띄운다. */
@@ -452,17 +492,18 @@ private fun RowScope.MiniKey(
     val kb = LocalKb.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val holdMs = LocalHoldMs.current
     // 방향키 등은 꾹 누르면 백스페이스처럼 반복.
-    val inputModifier = if (repeatable) Modifier.pointerInput(Unit) {
+    val inputModifier = if (repeatable) Modifier.pointerInput(holdMs) {
         detectTapGestures(
             onPress = {
                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 val job = scope.launch {
                     onClick()
-                    delay(400)
+                    delay(holdMs)
                     while (isActive) {
                         onClick()
-                        delay(45)
+                        delay(REPEAT_INTERVAL_MS)
                     }
                 }
                 try {
@@ -640,10 +681,13 @@ private fun KeyButton(
         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         onKey(k)
     }
-    // 백스페이스·방향키는 꾹 누르면 반복.
-    val repeatable = key is Key.Action && key.type in setOf(
+    val holdMs = LocalHoldMs.current
+    // 백스페이스·방향키, 그리고 반복이 켜진 글자 키는 꾹 누르면 반복.
+    val repeatable = (key is Key.Action && key.type in setOf(
         ActionType.BACKSPACE, ActionType.LEFT, ActionType.RIGHT, ActionType.UP, ActionType.DOWN
-    )
+    )) || (key is Key.Char && key.repeat)
+    // 대체키: 길게 누르면 alt 문자를 입력(반복과 배타 — 반복이 우선).
+    val altOutput = if (key is Key.Char && !key.repeat) key.alt else ""
     // 길게 누름이 있는 키: 한/A(호스트 한/영 전환), 📋/✂(모드 교차 전환).
     val hasLongPress = key is Key.Action && key.type in setOf(
         ActionType.LANGUAGE, ActionType.CLIPBOARD, ActionType.SNIPPETS
@@ -654,17 +698,17 @@ private fun KeyButton(
     var pressed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val pressModifier = when {
-        // 백스페이스: 꾹 누르면 연속 삭제(다른 키보드와 동일).
-        repeatable -> Modifier.pointerInput(Unit) {
+        // 백스페이스·반복 글자 키: 꾹 누르면 연속 입력(다른 키보드와 동일).
+        repeatable -> Modifier.pointerInput(holdMs) {
             detectTapGestures(
                 onPress = {
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     val job = scope.launch {
                         onKey(key)          // 첫 입력
-                        delay(400)          // 길게 누름 인식 지연
+                        delay(holdMs)       // 길게 누름 인식 지연
                         while (isActive) {  // 이후 빠르게 반복
                             onKey(key)
-                            delay(45)
+                            delay(REPEAT_INTERVAL_MS)
                         }
                     }
                     // 손을 떼거나 제스처가 취소돼도 반복 작업이 반드시 멈추도록 finally 로 정리.
@@ -726,6 +770,36 @@ private fun KeyButton(
                 }
             )
         }
+        // 대체키가 있는 글자 키: 짧게 = 본래 값(경계 스냅 포함), 길게 = alt 값.
+        altOutput.isNotEmpty() -> Modifier.pointerInput(key, neighborLeft, neighborRight, holdMs) {
+            detectTapGestures(
+                onPress = { pos ->
+                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    var altFired = false
+                    val job = scope.launch {
+                        delay(holdMs)
+                        altFired = true
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        onKey(Key.Char(altOutput))
+                    }
+                    try {
+                        val released = tryAwaitRelease()
+                        if (released && !altFired) {
+                            val resolved = resolveEdgeSnap(
+                                key as Key.Char, pos.x, size.width.toFloat(),
+                                neighborLeft, neighborRight, expectVowel, confusionBoost
+                            )
+                            (resolved as? Key.Char)?.let {
+                                onCharTouch(it.output, pos.x / size.width, pos.y / size.height)
+                            }
+                            onKey(resolved)
+                        }
+                    } finally {
+                        job.cancel()
+                    }
+                }
+            )
+        }
         // 글자 키: 터치 x 좌표를 받아 경계 스냅(모음이 올 자리에서 자음 키의
         // 가장자리를 눌렀으면 이웃 모음으로 보정)을 적용하고, 오타 측정기에
         // 터치 지점을 보고한다.
@@ -776,17 +850,27 @@ private fun KeyButton(
                 .fillMaxSize()
                 .padding(horizontal = 2.dp, vertical = 2.5.dp)
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.fillMaxSize()
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 Text(
                     text = label,
                     fontSize = fontSize,
                     fontWeight = if (isAction) FontWeight.Medium else FontWeight.Normal,
                     color = kb.text,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center)
                 )
+                // 대체키(길게 눌러 입력) 표시 — 키 오른쪽 위에 작게.
+                if (key is Key.Char && key.alt.isNotEmpty() && !key.repeat) {
+                    Text(
+                        text = key.alt,
+                        fontSize = 9.sp,
+                        color = kb.textDim,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 1.dp, end = 4.dp)
+                    )
+                }
             }
         }
         // 키 프리뷰: 눌린 글쇠를 위(맨 윗줄은 제자리)에 크게 띄운다. 손가락에
@@ -893,5 +977,6 @@ private fun keyWeight(key: Key): Float = when (key) {
         else -> 1f
     }
     is Key.Char -> key.weight
+    is Key.Gap -> key.weight
     else -> 1f
 }

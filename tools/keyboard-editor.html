@@ -36,6 +36,8 @@
     border:1px solid var(--border);border-radius:6px}
   button.act:hover{border-color:var(--accent)}
   button.act.primary{background:var(--accent);color:var(--ink);border-color:var(--accent)}
+  button.act:disabled{opacity:.45;cursor:default}
+  button.act:disabled:hover{border-color:var(--border)}
   button.act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .hint{color:var(--muted);font-size:12.5px}
 
@@ -46,6 +48,8 @@
   .rowtools button{font:600 11px var(--mono);line-height:1;cursor:pointer;width:22px;height:15px;padding:0;
     color:var(--muted);background:transparent;border:1px solid var(--border);border-radius:4px}
   .rowtools button:hover{color:var(--text);border-color:var(--accent)}
+  .rowlabel{flex:0 0 46px;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;
+    font:600 10.5px var(--ui);color:var(--muted)}
   .keys{display:flex;gap:4px;flex:1}
   .key{font:500 15px var(--mono);min-width:26px;min-height:48px;padding:4px 2px;flex-basis:0;cursor:grab;
     display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
@@ -53,14 +57,21 @@
     overflow:hidden;white-space:nowrap;position:relative}
   .key.k-act{background:var(--key-act);font-size:12px;font-weight:600}
   .key.k-code{background:var(--key-code);font-size:11px}
+  .key.k-gap{background:transparent;border-style:dashed;color:var(--muted);font-size:10px;cursor:pointer}
+  .key.k-mini{min-height:34px;font-size:12px;background:var(--key-code);cursor:pointer}
   .key.sel{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
   .key.drop-before{box-shadow:-3px 0 0 var(--accent)}
   .key.dragging{opacity:.4}
   .key .alt{font:400 9px var(--mono);color:var(--muted);margin-top:2px;line-height:1.1}
+  .key .badge{position:absolute;top:1px;right:4px;font:600 9px var(--mono);color:var(--muted)}
+  .key .rep{position:absolute;bottom:1px;right:4px;font:600 9px var(--mono);color:var(--accent)}
   .addkey{font:600 16px var(--mono);cursor:pointer;min-width:24px;color:var(--muted);background:transparent;
     border:1px dashed var(--border);border-radius:7px;flex:0 0 auto}
   .addkey:hover{color:var(--accent);border-color:var(--accent)}
-  .foot{display:flex;gap:8px;margin-top:10px;align-items:center}
+  .splitprev{flex-basis:0;border:1px dashed var(--accent);border-radius:7px;position:relative;min-width:8px}
+  .splitprev::after{content:"";position:absolute;left:50%;top:10%;bottom:10%;width:2px;background:var(--accent);opacity:.7}
+  .foot{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+  .foot input[type=range]{accent-color:var(--accent);vertical-align:middle}
 
   .grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px}
   @media(min-width:820px){.grid{grid-template-columns:1fr 320px}}
@@ -79,8 +90,10 @@
   textarea{width:100%;min-height:150px;font:12.5px/1.5 var(--mono);padding:12px;background:var(--sunken);
     color:var(--text);border:1px solid var(--border);border-radius:6px;resize:vertical;tab-size:2}
   textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
-  .io-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .io-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
   .io-head h2{margin:0;flex:1}
+  .sect{display:flex;align-items:baseline;gap:10px;margin:18px 0 6px}
+  .sect h2{font-size:14px;margin:0}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--text);
     color:var(--bg);padding:10px 18px;border-radius:8px;font-size:13.5px;font-weight:600;opacity:0;
     pointer-events:none;transition:opacity .2s,transform .2s;z-index:9}
@@ -90,7 +103,7 @@
 <div class="wrap">
   <header>
     <h1>키보드 프레임 편집기</h1>
-    <p class="sub">하나의 격자에서 각 키가 <b>한글·영문·기호</b> 값을 함께 가집니다. 미리보기 레이어를 바꿔도 키는 안 움직이고 값만 바뀝니다. 아래 JSON 을 앱 <code class="i">설정 → 레이아웃 편집 → 적용</code> 에 붙여넣으세요.</p>
+    <p class="sub">하나의 격자에서 각 키가 <b>한글·영문·기호</b> 값을 함께 가집니다. 미리보기 레이어를 바꿔도 키는 안 움직이고 값만 바뀝니다. JSON 은 <b>레이어 분리 형식</b>(구조 grid + 레이어별 값 layers + 센터 패드 center)으로 내보내며, 앱 <code class="i">설정 → 레이아웃 편집 → 적용</code> 에 붙여넣으세요.</p>
   </header>
 
   <div class="bar">
@@ -114,17 +127,29 @@
   <div class="foot">
     <button class="act" id="btn-addrow">＋ 행 추가</button>
     <span class="hint" id="rowcount"></span>
+    <span class="vr"></span>
+    <span class="hint">분할 미리보기</span>
+    <label class="hint">간격 <input type="range" id="prev-gap" min="0" max="6" step="0.5" value="0"> <span id="prev-gap-v">0</span></label>
+    <label class="hint">위치 <input type="range" id="prev-ratio" min="10" max="90" step="1" value="50"> <span id="prev-ratio-v">50</span>%</label>
     <span class="spacer"></span>
-    <span class="hint">키 위 작은 글씨 = 다른 두 레이어 값</span>
+    <span class="hint">키 오른쪽 위 = 대체키 · ⟳ = 반복 · 아래 작은 글씨 = 다른 레이어 값</span>
   </div>
+
+  <div class="sect"><h2>분할 센터 패드</h2>
+    <span class="hint">분할했을 때 가운데 빈 칸의 버튼. 맨 아랫줄이 키보드 맨 아래 줄에 옵니다.</span>
+    <span class="spacer"></span>
+    <button class="act" id="btn-addcrow">＋ 줄 추가(위에)</button>
+  </div>
+  <div class="board" id="cboard" aria-label="센터 패드"></div>
 
   <div class="grid">
     <section class="panel">
       <div class="io-head"><h2>레이아웃 JSON</h2>
         <button class="act primary" id="btn-copy">복사</button>
-        <button class="act" id="btn-import">붙여넣기 불러오기</button></div>
+        <button class="act" id="btn-import">클립보드 불러오기</button>
+        <button class="act" id="btn-undo" disabled>↩ 되돌리기</button></div>
       <textarea id="json" spellcheck="false" aria-label="레이아웃 JSON"></textarea>
-      <p class="hint" style="margin-top:8px">앱에서 <code class="i">기본값 불러오기</code> 로 현재 프레임을 복사해 여기 붙여넣고 <b>붙여넣기 불러오기</b> 하면 그걸 편집합니다.</p>
+      <p class="hint" style="margin-top:8px">앱에서 <code class="i">기본값 불러오기</code> 로 현재 배열을 복사한 뒤 <b>클립보드 불러오기</b> 를 누르면 그 내용으로 <b>덮어씁니다</b>(실수하면 ↩ 되돌리기). 클립보드 접근이 막힌 브라우저에서는 위 텍스트칸에 붙여넣고 다시 누르면 그 내용을 씁니다.</p>
     </section>
 
     <aside class="panel" id="inspector">
@@ -140,17 +165,25 @@
 /* ── 특수 키 ── */
 const ACT={SHIFT:"⇧",BACKSPACE:"⌫",SPACE:"space",ENTER:"↵",LANGUAGE:"한/A",SYMBOLS:"?123",
   CTRL:"ctrl",ALT:"alt",CLIPBOARD:"📋",SNIPPETS:"✂",LEFT:"◀",RIGHT:"▶",UP:"▲",DOWN:"▼",
-  COMMA:",",PERIOD:".",SELECT_ALL:"전체",COPY:"복사",PASTE:"붙여",CUT:"잘라",UNDO:"되돌"};
+  COMMA:",",PERIOD:".",SELECT:"선택",SELECT_ALL:"전체",COPY:"복사",PASTE:"붙여",CUT:"잘라",UNDO:"되돌"};
 const CODE={TAB:"tab",ESC:"esc",DEL:"del",HOME:"home",END:"end",PGUP:"pgup",PGDN:"pgdn"};
+const LAYERS=["kor","eng","sym"];
+const ALTKEY={kor:"altKor",eng:"altEng",sym:"altSym"};
 
 /* ── 슬롯 모델 ──
-   char slot: {t:'ch', kor,eng,sym, w}
-   fn slot:   {t:'act', act, l, w}  |  {t:'code', code, l} */
-const same=(s,w=1)=>({t:"ch",kor:s,eng:s,sym:s,w});
-const cc=(kor,eng,sym,w=1)=>({t:"ch",kor,eng,sym,w});
+   char: {t:'ch', kor,eng,sym, w, rep, altKor,altEng,altSym}
+   fn:   {t:'act', act, l, w} | {t:'code', code, l}
+   gap:  {t:'gap', w}   빈 공간(자리만 차지) */
+const same=(s,w=1)=>({t:"ch",kor:s,eng:s,sym:s,w,rep:false,altKor:"",altEng:"",altSym:""});
+const cc=(kor,eng,sym,w=1)=>({t:"ch",kor,eng,sym,w,rep:false,altKor:"",altEng:"",altSym:""});
 const A=(act,w=0)=>({t:"act",act,l:ACT[act]||"",w});
 const KC=(code)=>({t:"code",code,l:CODE[code]});
+const GAP=(w=1)=>({t:"gap",w});
 
+function defaultCenter(){ /* 아래줄부터(인덱스 0 = 키보드 맨 아래) */
+  return [[A("SELECT")],[A("LEFT"),A("RIGHT")],[A("UP"),A("DOWN")],
+          [KC("ESC"),A("SELECT_ALL")],[A("COPY"),A("PASTE")],[A("CUT"),A("UNDO")]];
+}
 function defaultProfile(aux){
   const term=[KC("TAB"),A("ALT"),KC("DEL"),KC("HOME"),KC("END"),A("CLIPBOARD"),A("SNIPPETS"),KC("PGUP"),KC("PGDN"),same("+"),same("-"),same("=")];
   const prog=["'","\"","|","/","\\","{","}","[","]","_"].map(s=>same(s));
@@ -160,73 +193,140 @@ function defaultProfile(aux){
   const r3=[A("SHIFT",1.5),cc("ㅋ","z","("),cc("ㅌ","x",")"),cc("ㅊ","c","["),cc("ㅍ","v","]"),cc("ㅠ","b","<"),cc("ㅜ","n","."),cc("ㅡ","m","0"),A("BACKSPACE",1.5)];
   const act=[A("CTRL"),A("SYMBOLS"),A("LANGUAGE"),A("LEFT"),A("SPACE",1.56),A("UP",0.94),A("DOWN"),same("?"),A("COMMA",0.94),A("SPACE",1.56),A("RIGHT"),A("PERIOD"),A("ENTER")];
   const pre = aux==="all"?[term,prog,num] : aux==="term"?[term] : [];
-  return [...pre,r1,r2,r3,act];
+  return {rows:[...pre,r1,r2,r3,act], center:defaultCenter()};
 }
 function defaultLayout(){return {unfolded:defaultProfile("all"), folded:defaultProfile("term")};}
 
 let layout=defaultLayout();
-let profile="unfolded", layer="kor", sel=null, drag=null;
-const rows=()=>layout[profile];
+let profile="unfolded", layer="kor", drag=null;
+let sel=null;                       // {area:'main'|'center', r, c}
+let prevGap=0, prevRatio=50;        // 분할 미리보기(편집 전용, JSON 에 안 들어감)
+const rows=()=>layout[profile].rows;
+const center=()=>layout[profile].center;
 
-/* ── 직렬화 (앱 프레임 형식) ── */
+/* ── 언두 ── */
+const undoStack=[];
+const undoBtn=document.getElementById("btn-undo");
+function pushUndo(){
+  undoStack.push(JSON.stringify(layout));
+  if(undoStack.length>20)undoStack.shift();
+  undoBtn.disabled=false;
+}
+function popUndo(){
+  if(!undoStack.length)return;
+  layout=JSON.parse(undoStack.pop());
+  undoBtn.disabled=!undoStack.length;
+  sel=null;sync();toast("되돌렸습니다");
+}
+
+/* ── 직렬화: 레이어 분리 형식 (grid + layers + center) ── */
 function slotToJson(s){
   if(s.t==="act"){const o={act:s.act};if(s.l)o.l=s.l;if(s.w>0)o.w=s.w;return o;}
   if(s.t==="code")return {code:s.code,l:s.l};
-  if(s.kor===s.eng&&s.eng===s.sym){const o={k:s.kor};if(s.w!==1)o.w=s.w;return o;}
-  const o={kor:s.kor,eng:s.eng,sym:s.sym};if(s.w!==1)o.w=s.w;return o;
+  if(s.t==="gap")return {gap:s.w||1};
+  const o={k:s.kor};if(s.w&&s.w!==1)o.w=s.w;return o;   // 센터 패드의 문자 버튼 등
 }
-function frameJson(prof){return prof.map(row=>row.map(slotToJson));}
-function toJson(){return JSON.stringify({unfolded:{frame:frameJson(layout.unfolded)},folded:{frame:frameJson(layout.folded)}},null,2);}
+function layerVal(s,ly){
+  const v=s[ly]||"", alt=s.rep?"":(s[ALTKEY[ly]]||"");
+  return alt?{v,alt}:v;
+}
+function profileJson(p){
+  const grid=[],lk=[],le=[],ls=[];
+  p.rows.forEach(row=>{
+    const g=[],k=[],e=[],sy=[];
+    row.forEach(s=>{
+      if(s.t==="ch"){
+        const o={};if(s.w!==1)o.w=s.w;if(s.rep)o.rep=true;g.push(o);
+        k.push(layerVal(s,"kor"));e.push(layerVal(s,"eng"));sy.push(layerVal(s,"sym"));
+      }else g.push(slotToJson(s));
+    });
+    grid.push(g);lk.push(k);le.push(e);ls.push(sy);
+  });
+  return {grid,layers:{kor:lk,eng:le,sym:ls},center:p.center.map(r=>r.map(slotToJson))};
+}
+function toJson(){return JSON.stringify({unfolded:profileJson(layout.unfolded),folded:profileJson(layout.folded)},null,2);}
 
+/* ── 역직렬화: 레이어 분리 / 프레임 / 모드별 배열 모두 허용 ── */
 function slotFromJson(it){
   if(typeof it==="string")return same(it);
   if(it.act!=null)return {t:"act",act:it.act,l:it.l||ACT[it.act]||"",w:it.w||0};
-  if(it.code!=null)return {t:"code",code:it.code,l:it.l||CODE[it.code]||it.code.toLowerCase()};
+  if(it.code!=null)return {t:"code",code:it.code,l:it.l||CODE[it.code]||String(it.code).toLowerCase()};
+  if(it.gap!=null)return GAP(it.gap||1);
   if(it.kor!=null||it.eng!=null||it.sym!=null)return cc(it.kor||"",it.eng||"",it.sym||"",it.w||1);
-  if(it.k!=null)return same(it.k,it.w||1);
+  if(it.k!=null){const s=same(it.k,it.w||1);if(it.alt)s.altKor=s.altEng=s.altSym=it.alt;if(it.rep)s.rep=true;return s;}
   return same(String(it));
 }
-function frameFromJson(arr){return arr.map(row=>row.map(slotFromJson));}
+function lval(arr,r,c){
+  const it=arr&&arr[r]?arr[r][c]:null;
+  if(it==null)return {v:"",alt:""};
+  if(typeof it==="object")return {v:it.v||"",alt:it.alt||""};
+  return {v:String(it),alt:""};
+}
+function centerFromJson(arr){return arr&&arr.length?arr.map(r=>r.map(slotFromJson)):defaultCenter();}
+function profFromJson(o){
+  if(!o)return null;
+  if(o.grid&&o.layers){
+    const L=o.layers;
+    const rws=o.grid.map((grow,r)=>{
+      let ci=0;
+      return grow.map(gs=>{
+        if(gs&&gs.act!=null)return slotFromJson(gs);
+        if(gs&&gs.code!=null)return slotFromJson(gs);
+        if(gs&&gs.gap!=null)return GAP(gs.gap||1);
+        const kv=lval(L.kor,r,ci),ev=lval(L.eng,r,ci),sv=lval(L.sym,r,ci);ci++;
+        const s=cc(kv.v,ev.v,sv.v,(gs&&gs.w)||1);
+        s.rep=!!(gs&&gs.rep);s.altKor=kv.alt;s.altEng=ev.alt;s.altSym=sv.alt;
+        return s;
+      });
+    });
+    return {rows:rws,center:centerFromJson(o.center)};
+  }
+  if(o.frame)return {rows:o.frame.map(row=>row.map(slotFromJson)),center:centerFromJson(o.center)};
+  if(o.korean){ // 구형 모드별 배열: 한글 기준 프레임 근사
+    const k=o.korean,e=o.english||o.korean,s=o.symbols||o.korean;
+    const valOf=it=>{const sl=slotFromJson(it);return sl.t==="ch"?sl.kor:"";};
+    const rws=k.map((row,r)=>row.map((it,c)=>{
+      const base=slotFromJson(it);
+      if(base.t!=="ch")return base;
+      const ev=e[r]&&e[r][c]!=null?valOf(e[r][c]):base.kor;
+      const sv=s[r]&&s[r][c]!=null?valOf(s[r][c]):base.kor;
+      return cc(base.kor,ev,sv,base.w);
+    }));
+    return {rows:rws,center:centerFromJson(o.center)};
+  }
+  return null;
+}
 function loadJson(str){
   const root=JSON.parse(str);
-  function prof(o){
-    if(o&&o.frame)return frameFromJson(o.frame);
-    // 호환: 모드별 배열이면 한글 기준으로 프레임 근사(영/기호는 같은 위치에서 가져옴).
-    if(o&&o.korean){
-      const k=o.korean,e=o.english||o.korean,s=o.symbols||o.korean;
-      return k.map((row,r)=>row.map((it,c)=>{
-        const base=slotFromJson(it);
-        if(base.t!=="ch")return base;
-        const ev=e[r]&&e[r][c]!=null?valOf(e[r][c]):base.kor;
-        const sv=s[r]&&s[r][c]!=null?valOf(s[r][c]):base.kor;
-        return cc(base.kor,ev,sv,base.w);
-      }));
-    }
-    return null;
-  }
-  function valOf(it){const sl=slotFromJson(it);return sl.t==="ch"?sl.kor:"";}
   let un,fo;
-  if(root.unfolded||root.folded){un=prof(root.unfolded)||prof(root.folded);fo=prof(root.folded)||prof(root.unfolded);}
-  else {un=prof(root);fo=JSON.parse(JSON.stringify(un));}
-  if(!un)throw new Error("frame/korean 을 찾지 못했습니다");
+  if(root.unfolded||root.folded){un=profFromJson(root.unfolded)||profFromJson(root.folded);fo=profFromJson(root.folded)||profFromJson(root.unfolded);}
+  else {un=profFromJson(root);fo=un?JSON.parse(JSON.stringify(un)):null;}
+  if(!un)throw new Error("grid/frame/korean 을 찾지 못했습니다");
   layout={unfolded:un,folded:fo};
 }
 
 /* ── 렌더 ── */
 const board=document.getElementById("board");
+const cboard=document.getElementById("cboard");
 const jsonEl=document.getElementById("json");
-function label(s){return s.t==="ch"?(s[layer]||"·"):s.t==="act"?(s.l||s.act):(s.l||s.code);}
+function label(s){return s.t==="ch"?(s[layer]||"·"):s.t==="gap"?"빈칸":s.t==="act"?(s.l||s.act):(s.l||s.code);}
 function altText(s){
   if(s.t!=="ch")return "";
-  const others=["kor","eng","sym"].filter(x=>x!==layer).map(x=>s[x]||"·");
-  return others.join(" ");
+  return LAYERS.filter(x=>x!==layer).map(x=>s[x]||"·").join(" ");
 }
 function weight(s){
   if(s.t==="act"&&s.w>0)return s.w;
   if(s.t==="act")return ({SPACE:1.5,ENTER:1.6,SHIFT:1.5,BACKSPACE:1.5})[s.act]||1;
   return s.w||1;
 }
-function render(){
+/* 분할 미리보기: 앱과 같은 규칙 — weight 누적이 ratio 지점에 가장 가까운 경계(동률=뒤쪽). */
+function splitIndex(row,ratio){
+  const total=row.reduce((a,s)=>a+weight(s),0), target=total*ratio;
+  let best=1,bestDiff=Infinity,acc=0;
+  for(let i=0;i<row.length-1;i++){acc+=weight(row[i]);const d=Math.abs(acc-target);if(d<=bestDiff){bestDiff=d;best=i+1;}}
+  return best;
+}
+function renderBoard(){
   board.innerHTML="";
   rows().forEach((row,r)=>{
     const rowEl=document.createElement("div");rowEl.className="krow";
@@ -234,23 +334,52 @@ function render(){
     tools.append(mkT("▲",()=>moveRow(r,-1)),mkT("▼",()=>moveRow(r,1)),mkT("×",()=>delRow(r)));
     rowEl.append(tools);
     const keys=document.createElement("div");keys.className="keys";
-    row.forEach((s,i)=>keys.append(mkKey(s,r,i)));
+    const splitAt=prevGap>0?splitIndex(row,prevRatio/100):-1;
+    row.forEach((s,i)=>{
+      if(i===splitAt){const g=document.createElement("div");g.className="splitprev";g.style.flexGrow=prevGap;g.title="분할 가운데 칸(미리보기)";keys.append(g);}
+      keys.append(mkKey(s,r,i));
+    });
     const add=document.createElement("button");add.className="addkey";add.textContent="＋";add.title="키 추가";
-    add.onclick=()=>{row.push(cc("A","a","1"));sel=[r,row.length-1];sync();};
+    add.onclick=()=>{row.push(cc("A","a","1"));sel={area:"main",r,c:row.length-1};sync();};
     keys.append(add);rowEl.append(keys);board.append(rowEl);
   });
   document.getElementById("rowcount").textContent=rows().length+"행";
-  renderInsp();
+  renderCenter();
+}
+function renderCenter(){
+  cboard.innerHTML="";
+  const c=center();
+  for(let r=c.length-1;r>=0;r--){       // 저장은 아래줄부터, 표시는 위줄부터
+    const rowEl=document.createElement("div");rowEl.className="krow";
+    const lab=document.createElement("div");lab.className="rowlabel";
+    lab.textContent=r===0?"맨 아래":"아래+"+r;
+    rowEl.append(lab);
+    const tools=document.createElement("div");tools.className="rowtools";
+    tools.append(mkT("▲",()=>moveCRow(r,1)),mkT("▼",()=>moveCRow(r,-1)),mkT("×",()=>delCRow(r)));
+    rowEl.append(tools);
+    const keys=document.createElement("div");keys.className="keys";
+    c[r].forEach((s,i)=>keys.append(mkCKey(s,r,i)));
+    const add=document.createElement("button");add.className="addkey";add.textContent="＋";add.title="버튼 추가";
+    add.onclick=()=>{c[r].push(A("COPY"));sel={area:"center",r,c:c[r].length-1};sync();};
+    keys.append(add);rowEl.append(keys);cboard.append(rowEl);
+  }
+  if(!c.length){const p=document.createElement("p");p.className="empty";p.style.margin="4px";p.textContent="줄이 없습니다 — 기본 커서 패드가 쓰입니다.";cboard.append(p);}
 }
 function mkT(t,fn){const b=document.createElement("button");b.textContent=t;b.onclick=fn;return b;}
+function isSel(area,r,i){return sel&&sel.area===area&&sel.r===r&&sel.c===i;}
 function mkKey(s,r,i){
   const el=document.createElement("div");
-  el.className="key"+(s.t==="act"?" k-act":s.t==="code"?" k-code":"")+(sel&&sel[0]===r&&sel[1]===i?" sel":"");
+  el.className="key"+(s.t==="act"?" k-act":s.t==="code"?" k-code":s.t==="gap"?" k-gap":"")+(isSel("main",r,i)?" sel":"");
   el.style.flexGrow=weight(s);
   const main=document.createElement("div");main.textContent=label(s);el.append(main);
-  if(s.t==="ch"){const alt=document.createElement("div");alt.className="alt";alt.textContent=altText(s);el.append(alt);}
+  if(s.t==="ch"){
+    const alt=document.createElement("div");alt.className="alt";alt.textContent=altText(s);el.append(alt);
+    const a=s[ALTKEY[layer]];
+    if(a&&!s.rep){const b=document.createElement("div");b.className="badge";b.textContent=a;el.append(b);}
+    if(s.rep){const rp=document.createElement("div");rp.className="rep";rp.textContent="⟳";el.append(rp);}
+  }
   el.draggable=true;
-  el.onclick=()=>{sel=[r,i];sync();};
+  el.onclick=()=>{sel={area:"main",r,c:i};sync();};
   el.addEventListener("dragstart",e=>{drag=[r,i];el.classList.add("dragging");e.dataTransfer.effectAllowed="move";});
   el.addEventListener("dragend",()=>{el.classList.remove("dragging");document.querySelectorAll(".drop-before").forEach(x=>x.classList.remove("drop-before"));});
   el.addEventListener("dragover",e=>{e.preventDefault();el.classList.add("drop-before");});
@@ -258,47 +387,122 @@ function mkKey(s,r,i){
   el.addEventListener("drop",e=>{e.preventDefault();el.classList.remove("drop-before");dropOn(r,i);});
   return el;
 }
+function mkCKey(s,r,i){
+  const el=document.createElement("div");
+  el.className="key k-mini"+(isSel("center",r,i)?" sel":"");
+  el.style.flexGrow=1;
+  el.textContent=label(s);
+  el.onclick=()=>{sel={area:"center",r,c:i};sync();};
+  return el;
+}
 function dropOn(r,i){
   if(!drag)return;
   const [fr,fi]=drag;const from=rows()[fr];const [m]=from.splice(fi,1);
   let idx=i;if(fr===r&&fi<i)idx--;
-  rows()[r].splice(idx,0,m);sel=[r,idx];drag=null;sync();
+  rows()[r].splice(idx,0,m);sel={area:"main",r,c:idx};drag=null;sync();
 }
 
-/* ── 인스펙터 ── */
+/* ── 인스펙터 ──
+   값 입력은 다시 그리지 않고(포커스 유지) 보드/JSON 만 갱신한다.
+   Enter = 다음 셀로 이동, 마지막 셀(기호)에서 Enter = 입력 마침(키보드 내림). */
 const inspEl=document.getElementById("insp");
+function selSlot(){
+  if(!sel)return null;
+  const src=sel.area==="main"?rows():center();
+  return src[sel.r]&&src[sel.r][sel.c]||null;
+}
 function renderInsp(){
-  if(!sel||!rows()[sel[0]]||!rows()[sel[0]][sel[1]]){inspEl.innerHTML='<p class="empty">키를 선택하세요.</p>';return;}
-  const s=rows()[sel[0]][sel[1]];
+  const s=selSlot();
+  if(!s){inspEl.innerHTML='<p class="empty">키를 선택하세요.</p>';return;}
   const f=[];
-  f.push(field("종류",selEl({ch:"문자(레이어별)",act:"기능 키",code:"하드웨어 키"},s.t,v=>changeType(s,v))));
-  if(s.t==="ch"){
-    const three=document.createElement("div");three.className="three";
-    three.append(miniField("한글",s.kor,v=>{s.kor=v;sync();}),
-                 miniField("영문",s.eng,v=>{s.eng=v;sync();}),
-                 miniField("기호",s.sym,v=>{s.sym=v;sync();}));
-    const wrap=document.createElement("div");wrap.className="field";
-    const l=document.createElement("label");l.textContent="레이어별 값";wrap.append(l,three);
-    f.push(wrap);
-    f.push(field("폭",numEl(s.w,v=>{s.w=v;sync();})));
-  }else if(s.t==="act"){
-    f.push(field("기능",selEl(actOpts(),s.act,v=>{s.act=v;s.l=ACT[v]||"";sync();})));
-    f.push(field("라벨(선택)",inpEl(s.l,v=>{s.l=v;sync();},ACT[s.act]||"")));
-    f.push(field("폭(0=기본)",numEl(s.w,v=>{s.w=v;sync();})));
-  }else{
-    f.push(field("키",selEl(codeOpts(),s.code,v=>{s.code=v;s.l=CODE[v];sync();})));
-    f.push(field("라벨",inpEl(s.l,v=>{s.l=v;sync();},"")));
+  if(sel.area==="main"){
+    f.push(field("종류",selEl({ch:"문자(레이어별)",act:"기능 키",code:"하드웨어 키",gap:"빈 공간"},s.t,v=>changeType(s,v))));
+    if(s.t==="ch"){
+      f.push(chainFields("레이어별 값 (Enter=다음 셀)",[
+        ["한글","kor"],["영문","eng"],["기호","sym"]
+      ].map(([lab,k])=>[lab,s[k],v=>{s[k]=v;syncBoard();}])));
+      f.push(field("폭",numEl(s.w,v=>{s.w=v;syncBoard();})));
+      const hold=s.rep?"rep":(s.altKor||s.altEng||s.altSym)?"alt":"none";
+      f.push(field("꾹 누르기(길게 누름)",selEl({none:"없음",rep:"반복 입력",alt:"대체키 입력"},hold,v=>{
+        s.rep=v==="rep";
+        if(v!=="alt"){s.altKor="";s.altEng="";s.altSym="";}
+        else if(!s.altKor&&!s.altEng&&!s.altSym){s.altKor=s.kor;s.altEng=s.eng;s.altSym=s.sym;}
+        sync();
+      })));
+      if(!s.rep&&(s.altKor||s.altEng||s.altSym)){
+        f.push(chainFields("대체키 값 (길게 누르면 입력, 키 오른쪽 위 표시)",[
+          ["한글","altKor"],["영문","altEng"],["기호","altSym"]
+        ].map(([lab,k])=>[lab,s[k],v=>{s[k]=v;syncBoard();}])));
+      }
+    }else if(s.t==="act"){
+      f.push(field("기능",selEl(actOpts(),s.act,v=>{s.act=v;s.l=ACT[v]||"";sync();})));
+      f.push(field("라벨(선택)",inpEl(s.l,v=>{s.l=v;syncBoard();},ACT[s.act]||"")));
+      f.push(field("폭(0=기본)",numEl(s.w,v=>{s.w=v;syncBoard();})));
+    }else if(s.t==="code"){
+      f.push(field("키",selEl(codeOpts(),s.code,v=>{s.code=v;s.l=CODE[v];sync();})));
+      f.push(field("라벨",inpEl(s.l,v=>{s.l=v;syncBoard();},"")));
+    }else{ // gap
+      f.push(field("폭",numEl(s.w,v=>{s.w=v;syncBoard();})));
+    }
+  }else{ // 센터 패드 버튼
+    f.push(field("종류",selEl({act:"기능 키",code:"하드웨어 키",ch:"문자 입력"},s.t,v=>changeCType(s,v))));
+    if(s.t==="act"){
+      f.push(field("기능",selEl(actOpts(),s.act,v=>{s.act=v;s.l=ACT[v]||"";sync();})));
+      f.push(field("라벨(선택)",inpEl(s.l,v=>{s.l=v;syncBoard();},ACT[s.act]||"")));
+    }else if(s.t==="code"){
+      f.push(field("키",selEl(codeOpts(),s.code,v=>{s.code=v;s.l=CODE[v];sync();})));
+      f.push(field("라벨",inpEl(s.l,v=>{s.l=v;syncBoard();},"")));
+    }else{
+      f.push(field("입력할 문자(열)",inpEl(s.kor,v=>{s.kor=s.eng=s.sym=v;syncBoard();},"")));
+    }
   }
   const mv=document.createElement("div");mv.className="rowbtns";
   mv.append(btn("◀ 왼쪽",()=>nudge(-1)),btn("오른쪽 ▶",()=>nudge(1)));
   const del=document.createElement("div");del.className="rowbtns";
-  const d=btn("이 키 삭제",()=>{rows()[sel[0]].splice(sel[1],1);sel=null;sync();});d.classList.add("danger");del.append(d);
+  const d=btn("이 키 삭제",()=>{
+    pushUndo();
+    const src=sel.area==="main"?rows():center();
+    src[sel.r].splice(sel.c,1);sel=null;sync();
+  });d.classList.add("danger");del.append(d);
   inspEl.innerHTML="";f.forEach(x=>inspEl.append(x));inspEl.append(mv,del);
 }
 function field(lab,ctl){const w=document.createElement("div");w.className="field";const l=document.createElement("label");l.textContent=lab;w.append(l,ctl);return w;}
-function miniField(lab,val,on){const w=document.createElement("div");const l=document.createElement("label");l.textContent=lab;l.style.fontSize="11px";l.style.color="var(--muted)";const i=document.createElement("input");i.value=val??"";i.oninput=()=>on(i.value);w.append(l,i);return w;}
-function inpEl(val,on,ph){const i=document.createElement("input");i.value=val??"";i.placeholder=ph||"";i.oninput=()=>on(i.value);return i;}
-function numEl(val,on){const i=document.createElement("input");i.type="number";i.step="0.05";i.min="0";i.value=val??1;i.oninput=()=>on(parseFloat(i.value)||0);return i;}
+/* 셀 3개짜리 묶음: Enter 로 다음 칸, 마지막 칸에서 Enter 는 blur(모바일 키보드 내림). */
+function chainFields(lab,items){
+  const wrap=document.createElement("div");wrap.className="field";
+  const l=document.createElement("label");l.textContent=lab;
+  const three=document.createElement("div");three.className="three";
+  const inputs=[];
+  items.forEach(([mini,val,on])=>{
+    const w=document.createElement("div");
+    const ml=document.createElement("label");ml.textContent=mini;ml.style.cssText="font-size:11px;color:var(--muted)";
+    const i=document.createElement("input");i.value=val??"";
+    i.oninput=()=>on(i.value);
+    inputs.push(i);w.append(ml,i);three.append(w);
+  });
+  inputs.forEach((i,n)=>{
+    i.addEventListener("keydown",e=>{
+      if(e.key!=="Enter")return;
+      e.preventDefault();
+      const next=inputs[n+1];
+      if(next){next.focus();next.select();}
+      else i.blur();
+    });
+  });
+  wrap.append(l,three);return wrap;
+}
+function inpEl(val,on,ph){
+  const i=document.createElement("input");i.value=val??"";i.placeholder=ph||"";
+  i.oninput=()=>on(i.value);
+  i.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();i.blur();}});
+  return i;
+}
+function numEl(val,on){
+  const i=document.createElement("input");i.type="number";i.step="0.05";i.min="0";i.value=val??1;
+  i.oninput=()=>on(parseFloat(i.value)||0);
+  i.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();i.blur();}});
+  return i;
+}
 function selEl(opts,val,on){const s=document.createElement("select");for(const[k,l]of Object.entries(opts)){const o=document.createElement("option");o.value=k;o.textContent=l;if(k===val)o.selected=true;s.append(o);}s.onchange=()=>on(s.value);return s;}
 function actOpts(){const o={};for(const k in ACT)o[k]=k+" ("+ACT[k]+")";return o;}
 function codeOpts(){const o={};for(const k in CODE)o[k]=k+" ("+CODE[k]+")";return o;}
@@ -308,23 +512,61 @@ function changeType(s,t){
   for(const k in s)delete s[k];
   if(t==="ch")Object.assign(s,cc("A","a","1"));
   else if(t==="act")Object.assign(s,A("SHIFT"));
+  else if(t==="gap")Object.assign(s,GAP(1));
   else Object.assign(s,KC("TAB"));
   sync();
 }
-function nudge(d){const row=rows()[sel[0]];const j=sel[1]+d;if(j<0||j>=row.length)return;[row[sel[1]],row[j]]=[row[j],row[sel[1]]];sel[1]=j;sync();}
-function moveRow(r,d){const j=r+d,rs=rows();if(j<0||j>=rs.length)return;[rs[r],rs[j]]=[rs[j],rs[r]];if(sel&&sel[0]===r)sel[0]=j;else if(sel&&sel[0]===j)sel[0]=r;sync();}
-function delRow(r){if(rows().length<=1)return toast("마지막 행은 못 지웁니다");rows().splice(r,1);sel=null;sync();}
+function changeCType(s,t){
+  if(t===s.t)return;
+  for(const k in s)delete s[k];
+  if(t==="ch")Object.assign(s,same("!"));
+  else if(t==="act")Object.assign(s,A("COPY"));
+  else Object.assign(s,KC("ESC"));
+  sync();
+}
+function nudge(d){
+  const src=sel.area==="main"?rows():center();
+  const row=src[sel.r];const j=sel.c+d;if(j<0||j>=row.length)return;
+  [row[sel.c],row[j]]=[row[j],row[sel.c]];sel.c=j;sync();
+}
+function moveRow(r,d){const j=r+d,rs=rows();if(j<0||j>=rs.length)return;[rs[r],rs[j]]=[rs[j],rs[r]];if(sel&&sel.area==="main"){if(sel.r===r)sel.r=j;else if(sel.r===j)sel.r=r;}sync();}
+function delRow(r){if(rows().length<=1)return toast("마지막 행은 못 지웁니다");pushUndo();rows().splice(r,1);if(sel&&sel.area==="main")sel=null;sync();}
+function moveCRow(r,d){const j=r+d,cs=center();if(j<0||j>=cs.length)return;[cs[r],cs[j]]=[cs[j],cs[r]];if(sel&&sel.area==="center"){if(sel.r===r)sel.r=j;else if(sel.r===j)sel.r=r;}sync();}
+function delCRow(r){pushUndo();center().splice(r,1);if(sel&&sel.area==="center")sel=null;sync();}
 
-function sync(){render();jsonEl.value=toJson();}
+function syncBoard(){renderBoard();jsonEl.value=toJson();}   // 인스펙터는 그대로(포커스 유지)
+function sync(){renderBoard();renderInsp();jsonEl.value=toJson();}
 
 /* ── 툴바 ── */
 document.querySelectorAll(".tab[data-profile]").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab[data-profile]").forEach(x=>x.setAttribute("aria-selected",x===t));profile=t.dataset.profile;sel=null;sync();});
-document.querySelectorAll(".tab[data-layer]").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab[data-layer]").forEach(x=>x.setAttribute("aria-selected",x===t));layer=t.dataset.layer;render();});
+document.querySelectorAll(".tab[data-layer]").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab[data-layer]").forEach(x=>x.setAttribute("aria-selected",x===t));layer=t.dataset.layer;sync();});
 document.getElementById("btn-addrow").onclick=()=>{rows().push([cc("A","a","1"),cc("B","b","2"),cc("C","c","3")]);sync();};
-document.getElementById("btn-default").onclick=()=>{layout=defaultLayout();sel=null;sync();toast("기본 프레임을 불러왔습니다");};
+document.getElementById("btn-addcrow").onclick=()=>{center().push([A("COPY"),A("PASTE")]);sync();};
+document.getElementById("btn-default").onclick=()=>{pushUndo();layout=defaultLayout();sel=null;sync();toast("기본 프레임을 불러왔습니다");};
 document.getElementById("btn-copy").onclick=async()=>{jsonEl.value=toJson();try{await navigator.clipboard.writeText(jsonEl.value);toast("복사했습니다");}catch{jsonEl.select();document.execCommand("copy");toast("복사했습니다");}};
-document.getElementById("btn-import").onclick=()=>{try{loadJson(jsonEl.value);sel=null;sync();toast("불러왔습니다");}catch(e){toast("JSON 오류: "+e.message);}};
+document.getElementById("btn-undo").onclick=popUndo;
+/* 불러오기 = 최신 클립보드 내용으로 덮어쓰기. 실패(권한 등)하면 텍스트칸 내용을 쓴다. */
+document.getElementById("btn-import").onclick=async()=>{
+  let text="",from="클립보드";
+  try{text=(await navigator.clipboard.readText())||"";}catch{}
+  if(!text.trim()){text=jsonEl.value;from="텍스트칸";}
+  if(!text.trim())return toast("클립보드가 비어 있습니다");
+  try{
+    pushUndo();
+    loadJson(text);
+    sel=null;sync();
+    toast(from+" 내용으로 덮어썼습니다 (↩ 로 되돌리기)");
+  }catch(e){
+    undoStack.pop();undoBtn.disabled=!undoStack.length;
+    toast("JSON 오류: "+e.message);
+  }
+};
 document.getElementById("btn-theme").onclick=()=>{const c=document.documentElement.getAttribute("data-theme");const dark=c?c==="dark":matchMedia("(prefers-color-scheme:dark)").matches;document.documentElement.setAttribute("data-theme",dark?"light":"dark");};
+
+/* ── 분할 미리보기 슬라이더 ── */
+const pg=document.getElementById("prev-gap"), pr=document.getElementById("prev-ratio");
+pg.oninput=()=>{prevGap=parseFloat(pg.value)||0;document.getElementById("prev-gap-v").textContent=pg.value;syncBoard();};
+pr.oninput=()=>{prevRatio=parseInt(pr.value)||50;document.getElementById("prev-ratio-v").textContent=pr.value;syncBoard();};
 
 const toastEl=document.getElementById("toast");let tt;
 function toast(m){toastEl.textContent=m;toastEl.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>toastEl.classList.remove("show"),1800);}

@@ -4,8 +4,18 @@ import android.view.KeyEvent
 
 /** 키 하나의 정의. */
 sealed interface Key {
-    /** 일반 문자 키. [label] 은 화면 표시, [output] 은 실제 입력값(없으면 label). [weight] 는 가로 폭. */
-    data class Char(val label: String, val output: String = label, val weight: Float = 1f) : Key
+    /**
+     * 일반 문자 키. [label] 은 화면 표시, [output] 은 실제 입력값(없으면 label).
+     * [weight] 는 가로 폭. [alt] 가 있으면 길게 눌러 그 문자를 입력(키 구석에
+     * 작게 표시). [repeat] 이면 꾹 누를 때 반복 입력(alt 와 배타).
+     */
+    data class Char(
+        val label: String,
+        val output: String = label,
+        val weight: Float = 1f,
+        val alt: String = "",
+        val repeat: Boolean = false,
+    ) : Key
 
     /** 특수 기능 키. [weight] 가 0 보다 크면 타입별 기본 폭 대신 쓴다. */
     data class Action(val type: ActionType, val label: String = "", val weight: Float = 0f) : Key
@@ -13,15 +23,15 @@ sealed interface Key {
     /** 하드웨어 keyCode 를 그대로 보내는 키(Del/Home/End/PgUp/PgDn 등). */
     data class KeyCode(val label: String, val code: Int) : Key
 
-    /** 빈 공간(가중치만 차지). 줄을 가운데로 들여써서 열을 맞추는 데 쓴다. */
-    data class Gap(val weight: Float) : Key
+    /** 빈 공간(가중치만 차지). [center] 는 분할이 끼운 가운데 칸(내용이 들어감). */
+    data class Gap(val weight: Float, val center: Boolean = false) : Key
 }
 
 enum class ActionType {
     SHIFT, BACKSPACE, LANGUAGE, SYMBOLS, SPACE, ENTER, COMMA, PERIOD, PIN,
     LEFT, RIGHT, UP, DOWN,
     CTRL, ALT, CLIPBOARD, SNIPPETS,
-    SELECT_ALL, COPY, PASTE, CUT, UNDO
+    SELECT, SELECT_ALL, COPY, PASTE, CUT, UNDO
 }
 
 /** 자판 모드. */
