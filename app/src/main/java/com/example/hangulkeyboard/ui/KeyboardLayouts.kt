@@ -1,0 +1,161 @@
+package com.example.hangulkeyboard.ui
+
+import android.view.KeyEvent
+
+/** 키 하나의 정의. */
+sealed interface Key {
+    /** 일반 문자 키. [label] 은 화면 표시, [output] 은 실제 입력값(없으면 label). [weight] 는 가로 폭. */
+    data class Char(val label: String, val output: String = label, val weight: Float = 1f) : Key
+
+    /** 특수 기능 키. */
+    data class Action(val type: ActionType, val label: String = "") : Key
+
+    /** 하드웨어 keyCode 를 그대로 보내는 키(Del/Home/End/PgUp/PgDn 등). */
+    data class KeyCode(val label: String, val code: Int) : Key
+
+    /** 빈 공간(가중치만 차지). 줄을 가운데로 들여써서 열을 맞추는 데 쓴다. */
+    data class Gap(val weight: Float) : Key
+}
+
+enum class ActionType {
+    SHIFT, BACKSPACE, LANGUAGE, SYMBOLS, SPACE, ENTER, COMMA, PERIOD, PIN,
+    LEFT, RIGHT, UP, DOWN,
+    CTRL, ALT, CLIPBOARD
+}
+
+/** 자판 모드. */
+enum class KeyboardMode { KOREAN, ENGLISH, SYMBOLS }
+
+/** 시프트 3단계: 해제 / 단일입력(한 글자 후 해제) / 지속(고정). */
+enum class ShiftState { OFF, SINGLE, LOCKED }
+
+object KeyboardLayouts {
+
+    // 영문 QWERTY (소문자) — 맨 위부터 심볼줄 / 특수문자줄 / 숫자줄
+    val ENGLISH: List<List<Key>> = listOf(
+        terminalRow(),
+        progRow(),
+        numberRow(),
+        row("q w e r t y u i o p"),
+        indentedRow("a s d f g h j k l"),
+        bottomLetterRow("z x c v b n m"),
+        actionRow()
+    )
+
+    // 한글 두벌식 — 맨 위부터 심볼줄 / 특수문자줄 / 숫자줄
+    val KOREAN: List<List<Key>> = listOf(
+        terminalRow(),
+        progRow(),
+        numberRow(),
+        row("ㅂ ㅈ ㄷ ㄱ ㅅ ㅛ ㅕ ㅑ ㅐ ㅔ"),
+        indentedRow("ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ"),
+        bottomLetterRow("ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ"),
+        actionRow()
+    )
+
+    // 기호(좌 6열) + 우측 계산기식 numpad(4열: 789/ 456* 123- 0.=+).
+    // 맨 아랫줄은 메인과 동일한 actionRow, 백스페이스도 메인과 같은 위치(액션줄 윗줄 우측 끝).
+    val SYMBOLS: List<List<Key>> = listOf(
+        charKeys("~ ` ! @ # $") + charKeys("7 8 9 /"),
+        charKeys("% ^ & * ( )") + charKeys("4 5 6 *"),
+        charKeys("- _ = + [ ]") + charKeys("1 2 3 -"),
+        charKeys("{ } \\ | : ;") + charKeys("0 . = +"),
+        charKeys("\" ' < > , . ?") + Key.Action(ActionType.BACKSPACE, "⌫"),
+        actionRow()
+    )
+
+    /** 영문 대문자 변환 + 시프트한 숫자 → 특수문자. */
+    fun shiftEnglish(rows: List<List<Key>>): List<List<Key>> =
+        rows.map { line ->
+            line.map { key ->
+                when {
+                    key is Key.Char && key.label.length == 1 && key.label[0].isLetter() ->
+                        Key.Char(key.label.uppercase(), key.output.uppercase())
+                    key is Key.Char && NUMBER_SHIFT.containsKey(key.label) ->
+                        Key.Char(NUMBER_SHIFT.getValue(key.label))
+                    else -> key
+                }
+            }
+        }
+
+    // 한글 시프트(쌍자음/이중모음). 매핑이 있는 키만 치환.
+    private val KOREAN_SHIFT = mapOf(
+        "ㅂ" to "ㅃ", "ㅈ" to "ㅉ", "ㄷ" to "ㄸ", "ㄱ" to "ㄲ", "ㅅ" to "ㅆ",
+        "ㅐ" to "ㅒ", "ㅔ" to "ㅖ"
+    )
+
+    // 시프트한 숫자 → 특수문자 (US 자판 기준). 한/영 모드 공통으로 쓴다.
+    private val NUMBER_SHIFT = mapOf(
+        "1" to "!", "2" to "@", "3" to "#", "4" to "$", "5" to "%",
+        "6" to "^", "7" to "&", "8" to "*", "9" to "(", "0" to ")"
+    )
+
+    /** 한글 시프트(쌍자음/이중모음) + 시프트한 숫자 → 특수문자. */
+    fun shiftKorean(rows: List<List<Key>>): List<List<Key>> =
+        rows.map { line ->
+            line.map { key ->
+                if (key is Key.Char)
+                    (KOREAN_SHIFT[key.label] ?: NUMBER_SHIFT[key.label])
+                        ?.let { Key.Char(it) } ?: key
+                else key
+            }
+        }
+
+    private fun row(spaceSeparated: String): List<Key> = charKeys(spaceSeparated)
+
+    // 9칸짜리 홈row. 좌우 빈칸 없이 양끝 키(ㅁ/ㅣ, a/l)만 넓혀 폭을 채운다.
+    private fun indentedRow(spaceSeparated: String): List<Key> {
+        val parts = spaceSeparated.split(" ")
+        return parts.mapIndexed { i, s ->
+            Key.Char(s, weight = if (i == 0 || i == parts.lastIndex) 1.5f else 1f)
+        }
+    }
+
+    // 상단 숫자줄. 시프트하면 NUMBER_SHIFT 매핑으로 특수문자가 된다.
+    private fun numberRow(): List<Key> = charKeys("1 2 3 4 5 6 7 8 9 0")
+
+    // 맨 윗줄: 코딩/터미널에서 자주 쓰는 키. 맨 앞은 Tab(기존 Ctrl 자리).
+    private fun terminalRow(): List<Key> = listOf(
+        Key.KeyCode("tab", KeyEvent.KEYCODE_TAB),
+        Key.Action(ActionType.ALT, "alt"),
+        Key.KeyCode("del", KeyEvent.KEYCODE_FORWARD_DEL),
+        Key.KeyCode("home", KeyEvent.KEYCODE_MOVE_HOME),
+        Key.KeyCode("end", KeyEvent.KEYCODE_MOVE_END),
+        Key.Action(ActionType.CLIPBOARD, "📋"),
+        Key.KeyCode("pgup", KeyEvent.KEYCODE_PAGE_UP),
+        Key.KeyCode("pgdn", KeyEvent.KEYCODE_PAGE_DOWN),
+        Key.Char("+"),
+        Key.Char("-"),
+        Key.Char("=")
+    )
+
+    // 프로그래밍/쉘에서 자주 쓰는 특수문자줄
+    private fun progRow(): List<Key> = charKeys("~ ` | / \\ { } [ ] _")
+
+    private fun charKeys(spaceSeparated: String): List<Key> =
+        spaceSeparated.split(" ").map { Key.Char(it) }
+
+    // 글자줄 + 좌측 Shift / 우측 Backspace
+    private fun bottomLetterRow(letters: String): List<Key> =
+        listOf<Key>(Key.Action(ActionType.SHIFT, "⇧"))
+            .plus(charKeys(letters))
+            .plus(Key.Action(ActionType.BACKSPACE, "⌫"))
+
+    // 맨 아래 기능키 줄 (맨 앞 Ctrl 추가, 문장부호는 ,→? .→, ?→. 로 순환):
+    //  Ctrl · ?123 · 한/A · ◀ · [space] · ▲ · ▼ · ? · , · [space] · ▶ · . · ↵
+    private fun actionRow(): List<Key> = listOf(
+        Key.Action(ActionType.CTRL, "ctrl"),
+        Key.Action(ActionType.SYMBOLS, "?123"),
+        Key.Action(ActionType.LANGUAGE, "한/A"),
+        Key.Action(ActionType.LEFT, "◀"),
+        Key.Action(ActionType.SPACE, ""),
+        Key.Action(ActionType.UP, "▲"),
+        Key.Action(ActionType.DOWN, "▼"),
+        Key.Char("?"),
+        Key.Action(ActionType.COMMA, ","),
+        Key.Action(ActionType.SPACE, ""),
+        Key.Action(ActionType.RIGHT, "▶"),
+        Key.Action(ActionType.PERIOD, "."),
+        Key.Action(ActionType.ENTER, "↵")
+    )
+}
