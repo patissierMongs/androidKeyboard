@@ -100,21 +100,23 @@ fun KeyboardView(
             }
             // 분할 시 가운데 남는 공간에 클립보드 리스트를 겹쳐 띄운다(키 배치는 안 바뀜).
             if (showClipboard && splitGap > 0f) {
-                // 가운데 공백이 차지하는 대략적 폭 비율에 맞춰 중앙에 배치.
-                val frac = (splitGap / (11f + splitGap)).coerceIn(0.1f, 0.4f)
-                Box(
-                    modifier = Modifier.matchParentSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(frac)
-                            .fillMaxHeight()
-                            .background(Color(0xFFECEFF1))
-                            .padding(horizontal = 3.dp, vertical = 2.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        ClipboardPanel(clips, onPaste)
+                // 줄마다 가운데 공백 위치가 조금씩 달라서, 모든 줄에서 공통으로 비어 있는
+                // 구간에만 패널을 띄운다. 그래야 패널이 키를 가리지 않는다.
+                val (start, end) = remember(rows, splitGap) { commonGap(rows, splitGap) }
+                if (end > start) {
+                    Row(modifier = Modifier.matchParentSize()) {
+                        if (start > 0f) Spacer(Modifier.weight(start))
+                        Box(
+                            modifier = Modifier
+                                .weight(end - start)
+                                .fillMaxHeight()
+                                .background(Color(0xFFECEFF1))
+                                .padding(horizontal = 3.dp, vertical = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            ClipboardPanel(clips, onPaste)
+                        }
+                        if (end < 1f) Spacer(Modifier.weight(1f - end))
                     }
                 }
             }
@@ -189,6 +191,20 @@ private fun ClipboardStrip(clips: List<String>, onPaste: (String) -> Unit) {
             }
         }
     }
+}
+
+// 모든 줄에서 공통으로 비어 있는 가운데 구간을 가로 비율(0~1)로 구한다.
+private fun commonGap(rows: List<List<Key>>, gap: Float): Pair<Float, Float> {
+    var start = 0f
+    var end = 1f
+    rows.forEach { keys ->
+        val mid = (keys.size + 1) / 2
+        val left = keys.take(mid).sumOf { keyWeight(it).toDouble() }.toFloat()
+        val total = keys.sumOf { keyWeight(it).toDouble() }.toFloat() + gap
+        start = maxOf(start, left / total)
+        end = minOf(end, (left + gap) / total)
+    }
+    return start to end
 }
 
 // 분할: 각 줄 가운데에 [gap] 폭의 공백을 끼운다(키 폭은 그대로 유지).
