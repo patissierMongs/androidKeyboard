@@ -16,6 +16,17 @@ android {
         versionName = "1.0"
     }
 
+    // 서명 키를 저장소에 고정해 어디서 빌드하든(로컬/CI) 같은 키로 서명 →
+    // 기기에서 삭제 없이 업데이트 설치가 된다. (개인용 debug 키)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -56,4 +67,8 @@ dependencies {
     implementation("androidx.savedstate:savedstate-ktx:1.2.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    testImplementation("junit:junit:4.13.2")
+    // 로컬 단위 테스트에서 android.jar 의 org.json 스텁 대신 실제 구현 사용
+    testImplementation("org.json:json:20240303")
 }

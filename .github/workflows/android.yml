@@ -1,0 +1,42 @@
+name: android-keyboard
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 저장소에 gradle-wrapper.jar 을 포함하지 않으므로 러너의 gradle 로 생성
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.9
+
+      - name: Unit tests (HangulComposer)
+        run: ./gradlew testDebugUnitTest
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      # Actions 실행 페이지에서 APK 를 바로 내려받을 수 있다.
+      # 저장소에 debug.keystore 가 고정되어 있어 재설치 없이 업데이트 설치 가능.
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hangul-keyboard-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/

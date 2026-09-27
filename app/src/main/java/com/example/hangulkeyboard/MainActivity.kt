@@ -2,38 +2,64 @@ package com.example.hangulkeyboard
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.hangulkeyboard.ui.AuxRows
+import com.example.hangulkeyboard.ui.CenterMode
+import com.example.hangulkeyboard.ui.Key
+import com.example.hangulkeyboard.ui.KeyboardMode
+import com.example.hangulkeyboard.ui.KeyboardView
+import com.example.hangulkeyboard.ui.LayoutConfig
+import com.example.hangulkeyboard.ui.ShiftState
+import org.json.JSONArray
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * 키보드 활성화 안내 + 설정(분할 공백) + 테스트 입력칸.
+ * 키보드 활성화 안내 + 접힘/펼침 프로파일별 설정 + 테스트 입력칸.
  * IME 자체는 [ImeService] 에 있다.
  */
 class MainActivity : ComponentActivity() {
@@ -61,8 +87,6 @@ class MainActivity : ComponentActivity() {
 private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("ime_prefs", Context.MODE_PRIVATE) }
-
-    var splitGap by remember { mutableFloatStateOf(prefs.getFloat("split_gap", 0f)) }
     var testText by remember { mutableStateOf("") }
 
     Column(
@@ -83,24 +107,51 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
         Button(onClick = onEnable) { Text("키보드 켜기 (시스템 설정)") }
         Button(onClick = onChoose) { Text("키보드 선택") }
 
-        // ── 분할 키보드 공백 조절 ──
-        Text(
-            "분할 간격 (가운데 공백): ${"%.1f".format(splitGap)}",
-            fontSize = 16.sp
+        HorizontalDivider()
+
+        // 프로파일은 ImeService 가 smallestScreenWidthDp(600 기준)로 자동 선택한다.
+        ProfileSection(
+            title = "펼쳤을 때 (메인 화면)",
+            prefix = "unfolded_",
+            prefs = prefs,
+            defaultSplit = 2f,
+            defaultHeight = 52f,
+            defaultAux = AuxRows.ALL
         )
-        Slider(
-            value = splitGap,
-            onValueChange = { splitGap = it },
-            onValueChangeFinished = {
-                prefs.edit().putFloat("split_gap", splitGap).apply()
-            },
-            valueRange = 0f..4f,
-            modifier = Modifier.fillMaxWidth()
+
+        HorizontalDivider()
+
+        ProfileSection(
+            title = "접었을 때 (커버 화면)",
+            prefix = "folded_",
+            prefs = prefs,
+            defaultSplit = 0f,
+            defaultHeight = 56f,
+            defaultAux = AuxRows.TERMINAL
         )
+
         Text(
-            "0 이면 분할 안 함. 값을 바꾼 뒤 아래 칸을 다시 누르면 적용됩니다.",
+            "분할 간격이 0 이면 분할하지 않습니다. 분할하면 가운데 공간에\n" +
+                "커서 패드가 표시되고, 📋 키로 클립보드 → 스니펫 순으로 전환합니다.\n" +
+                "설정 변경은 키보드에 즉시 반영됩니다.",
             fontSize = 13.sp
         )
+
+        HorizontalDivider()
+
+        HoldTimeSection(prefs)
+
+        HorizontalDivider()
+
+        SnippetSection(prefs)
+
+        HorizontalDivider()
+
+        LayoutSection(prefs)
+
+        HorizontalDivider()
+
+        TypoStatsSection(prefs)
 
         // ── 테스트 입력칸 ──
         OutlinedTextField(
@@ -109,5 +160,426 @@ private fun SetupScreen(onEnable: () -> Unit, onChoose: () -> Unit) {
             label = { Text("테스트 입력") },
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+/** 길게 누름 인식 시간(전역). 반복 키 시작 지연·대체키(길게 눌러 입력) 발동에 쓴다. */
+@Composable
+private fun HoldTimeSection(prefs: SharedPreferences) {
+    var hold by remember { mutableFloatStateOf(prefs.getInt("hold_ms", 400).toFloat()) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("길게 누름 시간", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "백스페이스·방향키의 반복 시작과 대체키(키를 길게 눌러 다른 문자 입력)가\n" +
+                "발동하기까지의 시간입니다. 접힘/펼침 공통.",
+            fontSize = 13.sp
+        )
+        Text("${hold.roundToInt()} ms", fontSize = 14.sp)
+        Slider(
+            value = hold,
+            onValueChange = { hold = it },
+            onValueChangeFinished = {
+                prefs.edit().putInt("hold_ms", hold.roundToInt()).apply()
+            },
+            valueRange = 150f..800f,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/** 스니펫 편집. 키보드 가운데 칸 세 번째 모드(📋 두 번)에 뜬다. */
+@Composable
+private fun SnippetSection(prefs: SharedPreferences) {
+    val snippets = remember {
+        mutableStateListOf<String>().apply {
+            runCatching {
+                val arr = JSONArray(prefs.getString("snippets", null) ?: "[]")
+                repeat(arr.length()) { add(arr.getString(it)) }
+            }
+        }
+    }
+    fun save() {
+        prefs.edit().putString("snippets", JSONArray(snippets.toList()).toString()).apply()
+    }
+    var newSnippet by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("스니펫", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "자주 쓰는 명령어/문자열 (가운데 오른쪽 열). 키보드에서 탭 = 입력,\n" +
+                "클립 항목을 길게 누르면 여기로 이동(고정), 스니펫을 길게 누르면 해제.",
+            fontSize = 13.sp
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = newSnippet,
+                onValueChange = { newSnippet = it },
+                label = { Text("새 스니펫") },
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = {
+                    val t = newSnippet.trim()
+                    if (t.isNotEmpty() && t !in snippets) {
+                        snippets.add(t)
+                        save()
+                        newSnippet = ""
+                    }
+                },
+                modifier = Modifier.padding(start = 8.dp)
+            ) { Text("추가") }
+        }
+        snippets.forEachIndexed { index, snippet ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    snippet,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                // 배치(순서) 조정 — 위가 키보드에서 먼저 보인다.
+                TextButton(onClick = {
+                    if (index > 0) {
+                        val item = snippets.removeAt(index)
+                        snippets.add(index - 1, item)
+                        save()
+                    }
+                }) { Text("↑") }
+                TextButton(onClick = {
+                    if (index < snippets.lastIndex) {
+                        val item = snippets.removeAt(index)
+                        snippets.add(index + 1, item)
+                        save()
+                    }
+                }) { Text("↓") }
+                TextButton(onClick = {
+                    snippets.removeAt(index)
+                    save()
+                }) { Text("삭제") }
+            }
+        }
+    }
+}
+
+/**
+ * 레이아웃 편집. 브라우저의 Artifact 에디터에서 만든 JSON 을 붙여넣어 적용한다.
+ * '기본값 불러오기'로 현재 배열을 텍스트로 꺼내 편집 시작점으로 쓸 수 있다.
+ */
+@Composable
+private fun LayoutSection(prefs: SharedPreferences) {
+    val context = LocalContext.current
+    val clipboard = remember {
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    }
+    var text by remember { mutableStateOf(prefs.getString("custom_layout", "") ?: "") }
+    var status by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("레이아웃 편집", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "브라우저 에디터에서 레이아웃 JSON 을 만들어 아래에 붙여넣고 ‘적용’.\n" +
+                "‘기본값 불러오기’로 현재 배열을 꺼내 편집 시작점으로 쓸 수 있습니다.",
+            fontSize = 13.sp
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text("레이아웃 JSON") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            maxLines = 8
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val json = text.trim()
+                if (json.isEmpty()) {
+                    prefs.edit().remove("custom_layout").apply()
+                    status = "커스텀 해제 — 기본 배열로."
+                } else if (LayoutConfig.parse(json).isEmpty) {
+                    status = "JSON 을 읽지 못했습니다. 형식을 확인하세요."
+                } else {
+                    prefs.edit().putString("custom_layout", json).apply()
+                    status = "적용됨. 키보드를 다시 열면 반영됩니다."
+                }
+            }) { Text("적용") }
+            Button(onClick = {
+                text = LayoutConfig.defaultJson()
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("layout", text)
+                )
+                status = "기본 배열을 넣고 클립보드에도 복사했습니다."
+            }) { Text("기본값 불러오기") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("layout", text)
+                )
+                status = "클립보드에 복사했습니다."
+            }) { Text("복사") }
+            TextButton(onClick = {
+                text = ""
+                prefs.edit().remove("custom_layout").apply()
+                status = "커스텀 해제 — 기본 배열로."
+            }) { Text("기본으로 초기화") }
+        }
+        if (status.isNotEmpty()) Text(status, fontSize = 12.sp)
+    }
+}
+
+/**
+ * 오타 분석. IME 가 기록한 터치 편향/혼동 쌍 통계를 읽어 보여준다.
+ * (모든 데이터는 이 기기의 SharedPreferences 에만 저장된다.)
+ */
+@Composable
+private fun TypoStatsSection(prefs: SharedPreferences) {
+    var refresh by remember { mutableStateOf(0) }
+    val tracker = remember(refresh) {
+        TypoTracker().apply { loadJson(prefs.getString("typo_stats", null)) }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("오타 분석", fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f))
+            TextButton(onClick = { refresh++ }) { Text("새로고침") }
+            TextButton(onClick = {
+                prefs.edit().remove("typo_stats").apply()
+                refresh++
+            }) { Text("초기화") }
+        }
+
+        if (tracker.taps == 0L) {
+            Text(
+                "아직 데이터가 없습니다. 키보드를 쓰다 보면 글자 키 터치 지점과\n" +
+                    "\"입력→백스페이스→다른 키\" 수정 패턴이 여기에 쌓입니다.",
+                fontSize = 13.sp
+            )
+            return@Column
+        }
+
+        val rate = if (tracker.taps > 0) tracker.corrections * 100.0 / tracker.taps else 0.0
+        Text(
+            "총 입력 ${tracker.taps}타 · 수정 ${tracker.corrections}회 · " +
+                "오타율 ${"%.1f".format(rate)}%",
+            fontSize = 14.sp
+        )
+
+        val topConfusions = tracker.confusion.entries.sortedByDescending { it.value }.take(8)
+        if (topConfusions.isNotEmpty()) {
+            Text("자주 헷갈리는 키 (지운 키 → 다시 누른 키)", fontSize = 14.sp,
+                fontWeight = FontWeight.Bold)
+            topConfusions.forEach { (pair, count) ->
+                val (from, to) = pair.split(">").let { it[0] to it.getOrElse(1) { "?" } }
+                Text("· $from → $to  ${count}회", fontSize = 14.sp)
+            }
+            Text(
+                "10회 이상 쌓인 인접 경계는 키보드가 스냅 폭을 자동으로 넓힙니다.",
+                fontSize = 12.sp
+            )
+        }
+
+        // 표본 30개 이상, 중심에서 8% 이상 치우친 키만 보여준다.
+        val biased = tracker.offsets.entries
+            .filter { it.value[2] >= 30f }
+            .map { (label, v) ->
+                Triple(label, v[0] / v[2], v[1] / v[2])
+            }
+            .filter { abs(it.second) >= 0.08f || abs(it.third) >= 0.08f }
+            .sortedByDescending { abs(it.second) + abs(it.third) }
+            .take(6)
+        if (biased.isNotEmpty()) {
+            Text("터치 편향 (키 중심 대비, 표본 30타 이상)", fontSize = 14.sp,
+                fontWeight = FontWeight.Bold)
+            biased.forEach { (label, dx, dy) ->
+                val h = if (dx >= 0) "오른쪽" else "왼쪽"
+                val v = if (dy >= 0) "아래" else "위"
+                Text(
+                    "· $label: $h ${abs(dx * 100).roundToInt()}% · $v ${abs(dy * 100).roundToInt()}%",
+                    fontSize = 14.sp
+                )
+            }
+            Text(
+                "아래쪽 편향이 크면 터치 Y 오프셋 보정(다음 단계)이 효과적입니다.",
+                fontSize = 12.sp
+            )
+        }
+    }
+}
+
+/**
+ * 실제 키보드를 축소해 보여주는 미리보기. 가운데 초록 세로선이 분할 지점이다.
+ * 슬라이더(분할 간격·위치)를 움직이면 선과 배치가 바로 바뀐다.
+ */
+@Composable
+private fun SplitPreview(
+    mode: KeyboardMode,
+    splitGap: Float,
+    splitRatio: Float,
+    keyHeight: Float,
+    auxRows: AuxRows,
+    custom: Map<KeyboardMode, List<List<Key>>>,
+    centerKeys: List<List<Key>> = emptyList(),
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0x33888888), RoundedCornerShape(8.dp))
+    ) {
+        KeyboardView(
+            mode = mode,
+            shiftState = ShiftState.OFF,
+            ctrlState = ShiftState.OFF,
+            altActive = false,
+            splitGap = splitGap,
+            splitRatio = splitRatio,
+            keyHeight = (keyHeight * 0.7f),   // 미리보기는 살짝 작게
+            auxRows = auxRows,
+            clips = emptyList(),
+            snippets = emptyList(),
+            centerMode = CenterMode.CURSOR,
+            selectActive = false,
+            clipInStrip = false,
+            onKey = {}, onKeyLong = {}, onPaste = {},
+            onClipLong = {}, onSnippetLong = {}, onToggleSelect = {},
+            customRows = custom,
+            centerKeys = centerKeys,
+        )
+        // 분할 지점 표시선: 줄이 나뉘는 대략적 가로 위치(splitRatio)에 세로선.
+        if (splitGap > 0f) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val x = size.width * splitRatio
+                drawLine(
+                    color = Color(0xFF4CAF50),
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
+                    strokeWidth = 3f
+                )
+            }
+        }
+    }
+}
+
+/** 접힘/펼침 한쪽 프로파일의 설정 묶음. 키는 [prefix] 를 붙여 저장한다. */
+@Composable
+private fun ProfileSection(
+    title: String,
+    prefix: String,
+    prefs: SharedPreferences,
+    defaultSplit: Float,
+    defaultHeight: Float,
+    defaultAux: AuxRows,
+) {
+    var split by remember { mutableFloatStateOf(prefs.getFloat(prefix + "split_gap", defaultSplit)) }
+    var ratio by remember { mutableFloatStateOf(prefs.getFloat(prefix + "split_ratio", 0.5f)) }
+    var height by remember { mutableFloatStateOf(prefs.getFloat(prefix + "key_height", defaultHeight)) }
+    var aux by remember {
+        mutableStateOf(
+            runCatching { AuxRows.valueOf(prefs.getString(prefix + "aux_rows", null) ?: "") }
+                .getOrDefault(defaultAux)
+        )
+    }
+    // 이 프로파일의 커스텀 배열·센터 패드(미리보기용). 없으면 기본값.
+    val customAll = remember { LayoutConfig.parse(prefs.getString("custom_layout", null)) }
+    val custom = customAll.forFolded(prefix == "folded_")
+    val centerKeys = customAll.centerForFolded(prefix == "folded_")
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+
+        Text("분할 간격 (가운데 공백): ${"%.1f".format(split)}", fontSize = 14.sp)
+        Slider(
+            value = split,
+            onValueChange = { split = it },
+            onValueChangeFinished = {
+                prefs.edit().putFloat(prefix + "split_gap", split).apply()
+            },
+            valueRange = 0f..6f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (split > 0f) {
+            val pct = (ratio * 100).roundToInt()
+            Text("분할 위치: 왼쪽 $pct% 지점 (아래 미리보기의 초록 선)", fontSize = 14.sp)
+            Slider(
+                value = ratio,
+                onValueChange = { ratio = it },
+                onValueChangeFinished = {
+                    prefs.edit().putFloat(prefix + "split_ratio", ratio).apply()
+                },
+                valueRange = 0.1f..0.9f,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // ── 실시간 미리보기 ── 슬라이더를 움직이면 분할 지점(초록 세로선)이 바로 이동.
+        SplitPreview(
+            mode = KeyboardMode.KOREAN,
+            splitGap = split,
+            splitRatio = ratio,
+            keyHeight = height,
+            auxRows = aux,
+            custom = custom,
+            centerKeys = centerKeys,
+        )
+
+        Text("키 높이: ${"%.0f".format(height)} dp", fontSize = 14.sp)
+        Slider(
+            value = height,
+            onValueChange = { height = it },
+            onValueChangeFinished = {
+                prefs.edit().putFloat(prefix + "key_height", height).apply()
+            },
+            valueRange = 33f..96f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("상단 보조줄", fontSize = 14.sp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val options = listOf(
+                AuxRows.ALL to "전체",
+                AuxRows.TERMINAL_NUMBER to "터미널+숫자",
+                AuxRows.TERMINAL to "터미널만",
+                AuxRows.NONE to "없음"
+            )
+            options.forEach { (value, label) ->
+                val selected = aux == value
+                Button(
+                    onClick = {
+                        aux = value
+                        prefs.edit().putString(prefix + "aux_rows", value.name).apply()
+                    },
+                    colors = if (selected) ButtonDefaults.buttonColors()
+                    else ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE0E0E0),
+                        contentColor = Color(0xFF444444)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(label, fontSize = 12.sp)
+                }
+            }
+        }
     }
 }

@@ -2,6 +2,7 @@ package com.example.hangulkeyboard
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
 import android.text.InputType
@@ -27,10 +28,15 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.hangulkeyboard.hangul.HangulComposer
 import com.example.hangulkeyboard.ui.ActionType
+import com.example.hangulkeyboard.ui.AuxRows
+import com.example.hangulkeyboard.ui.CenterMode
 import com.example.hangulkeyboard.ui.Key
 import com.example.hangulkeyboard.ui.KeyboardMode
 import com.example.hangulkeyboard.ui.KeyboardView
+import com.example.hangulkeyboard.ui.LayoutConfig
 import com.example.hangulkeyboard.ui.ShiftState
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Jetpack Compose 로 그리는 한/영 입력기(IME).
@@ -64,25 +70,80 @@ class ImeService : InputMethodService(),
     private var previousMode = KeyboardMode.KOREAN
     // 핀(자동숨김 방지). 켜 두면 앱을 닫아도 유지된다.
     private var pinned by mutableStateOf(false)
-    // Ctrl/Alt 스티키 모디파이어. 켜지면 다음 키를 조합(META)으로 전송한다.
-    private var ctrlActive by mutableStateOf(false)
+    // Ctrl 은 시프트처럼 3단계(해제/단일/잠금) — 터미널 연속 Ctrl 조합용.
+    private var ctrlState by mutableStateOf(ShiftState.OFF)
+    // Alt 스티키 모디파이어. 켜지면 다음 키를 조합(META)으로 전송한다.
     private var altActive by mutableStateOf(false)
     // 분할 키보드 가운데 공백 폭(키 폭 단위). 0 이면 분할 안 함. 앱에서 조절.
     private var splitGap by mutableStateOf(0f)
+    // 분할 지점 비율(0.5 = 줄 가운데). 앱에서 조절.
+    private var splitRatio by mutableStateOf(0.5f)
+    // 접힘/펼침 프로파일별 레이아웃: 상단 보조줄 범위, 키 높이(dp).
+    private var auxRows by mutableStateOf(AuxRows.ALL)
+    private var keyHeight by mutableStateOf(52f)
+    // 접은(커버) 화면 여부. 접은 화면에선 클립보드를 상단 한 줄 스트립으로 띄운다.
+    private var foldedProfile by mutableStateOf(false)
+    // 선택 모드: 켜져 있는 동안 커서 이동 키에 Shift 를 실어 텍스트를 선택한다.
+    private var selectActive by mutableStateOf(false)
+    // 길게 누름 인식 시간(ms) — 반복 시작 지연·대체키 발동. 앱 설정(전역).
+    private var holdMs by mutableStateOf(400L)
+    // 에디터에 선택영역이 있는지(onUpdateSelection 으로 추적). 조합 입력 전에
+    // 선택영역을 명시적으로 지우는 데 쓴다.
+    private var hasSelection = false
 
-    // 클립보드: 자체 히스토리(최근 항목) + 표시 여부.
+    // 클립보드 히스토리(왼쪽 열) + 스니펫(오른쪽 열, 영구 보관).
+    // 항목을 길게 누르면 두 영역 사이를 오간다(클립 → 스니펫 = 고정).
     private val clipboard by lazy {
         getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
     private val clipHistory = mutableStateListOf<String>()
-    private var showClipboard by mutableStateOf(false)
+    private val snippets = mutableStateListOf<String>()
+    private var centerMode by mutableStateOf(CenterMode.CURSOR)
+
+    // 오타 측정기: 터치 편향 + (입력→백스페이스→다른 키) 혼동 쌍을 기기 안에만
+    // 기록한다. 설정 앱의 '오타 분석' 화면이 이 데이터를 읽고, 혼동이 잦은
+    // 경계는 스냅 폭을 자동으로 넓힌다.
+    // 오타 통계는 레이아웃별로 따로 기록·보정한다:
+    //   버킷 = "<mode>_<folded|unfolded>"  (예: korean_unfolded, symbols_folded)
+    private val typoTrackers = mutableMapOf<String, TypoTracker>()
+    private var typoDirty = 0
+
+    private fun typoBucket(): String =
+        mode.name.lowercase() + "_" + (if (foldedProfile) "folded" else "unfolded")
+
+    private fun typo(): TypoTracker = typoTrackers.getOrPut(typoBucket()) { TypoTracker() }
+
+    // 사용자 커스텀 레이아웃(설정 앱에서 JSON 붙여넣기, 프로파일별). 비면 기본 배열.
+    private var customLayouts by mutableStateOf(LayoutConfig.Custom.EMPTY)
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
+
+    // 설정 앱에서 값을 바꾸면 키보드를 다시 열지 않아도 즉시 반영한다.
+    // (prefs 는 리스너를 약참조로 들고 있으므로 필드로 강참조를 유지해야 한다.)
+    private val prefsListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            when {
+                key == null -> Unit
+                key == KEY_SNIPPETS -> loadSnippets()
+                key == KEY_CUSTOM_LAYOUT -> loadCustomLayout()
+                key == KEY_HOLD_MS -> holdMs = prefs.getInt(KEY_HOLD_MS, 400).toLong()
+                // 설정 앱에서 '초기화'로 지웠을 때만 리셋(자체 저장은 무시).
+                key == KEY_TYPO_STATS ->
+                    if (prefs.getString(KEY_TYPO_STATS, null) == null) typoTrackers.clear()
+                key.startsWith(PROFILE_FOLDED) || key.startsWith(PROFILE_UNFOLDED) -> loadProfile()
+            }
+        }
 
     override fun onCreate() {
         savedStateController.performRestore(null)
         super.onCreate()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         pinned = prefs.getBoolean(KEY_PINNED, false)
+        loadClips()
+        loadSnippets()
+        migrateLegacyPins()
+        loadCustomLayout()
+        loadTypoStats()
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.addPrimaryClipChangedListener(clipListener) }
     }
 
@@ -109,14 +170,31 @@ class ImeService : InputMethodService(),
                 KeyboardView(
                     mode = mode,
                     shiftState = shiftState,
-                    ctrlActive = ctrlActive,
+                    ctrlState = ctrlState,
                     altActive = altActive,
                     splitGap = splitGap,
+                    splitRatio = splitRatio,
+                    keyHeight = keyHeight,
+                    auxRows = auxRows,
                     clips = clipHistory,
-                    showClipboard = showClipboard,
+                    snippets = snippets,
+                    centerMode = centerMode,
+                    selectActive = selectActive,
+                    clipInStrip = foldedProfile,
                     onKey = ::onKey,
                     onKeyLong = ::onKeyLong,
-                    onPaste = ::onPasteClip
+                    onPaste = ::onPasteClip,
+                    onClipLong = ::onClipLong,
+                    onSnippetLong = ::onSnippetLong,
+                    onToggleSelect = { selectActive = !selectActive },
+                    // 초성만 있는 상태 → 다음 자모는 모음일 확률이 높다(경계 스냅용).
+                    expectVowel = { mode == KeyboardMode.KOREAN && composer.expectingVowel },
+                    onCharTouch = ::onCharTouch,
+                    // 실측 혼동이 10회 이상 쌓인 경계는 스냅 폭을 넓힌다(현재 레이아웃 버킷).
+                    confusionBoost = { from, to -> typo().confusionCount(from, to) >= 10 },
+                    customRows = customLayouts.forFolded(foldedProfile),
+                    centerKeys = customLayouts.centerForFolded(foldedProfile),
+                    holdMs = holdMs
                 )
             }
         }
@@ -128,10 +206,62 @@ class ImeService : InputMethodService(),
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         applyPinDisposition()
-        // 앱에서 조절한 분할 공백 폭을 반영(키보드가 뜰 때마다 최신값 반영).
-        splitGap = prefs.getFloat(KEY_SPLIT_GAP, 0f)
+        // 키보드가 뜰 때마다 설정 앱이 저장한 최신값을 다시 읽는다.
+        // (prefs 변경 리스너가 프로세스·타이밍에 따라 안 먹을 수 있어, 열 때마다
+        //  확실히 재로드해 '다시 열면 반영'이 항상 동작하게 한다.)
+        loadProfile()
+        loadCustomLayout()
+        loadSnippets()
         // 현재 클립보드 내용을 히스토리에 반영(변경 이벤트가 없어도 최신값 확보).
         captureClip()
+    }
+
+    /**
+     * 접힘(커버)/펼침(메인) 화면에 따라 별도 저장된 레이아웃 설정을 읽는다.
+     * 폴드 커버 화면은 smallestScreenWidthDp 가 600 미만, 메인 화면은 이상이다.
+     */
+    private fun loadProfile() {
+        val folded = resources.configuration.smallestScreenWidthDp < 600
+        foldedProfile = folded
+        val p = if (folded) PROFILE_FOLDED else PROFILE_UNFOLDED
+        splitGap = prefs.getFloat(p + KEY_SPLIT_GAP, if (folded) 0f else 2f)
+        splitRatio = prefs.getFloat(p + KEY_SPLIT_RATIO, 0.5f)
+        keyHeight = prefs.getFloat(p + KEY_KEY_HEIGHT, if (folded) 56f else 52f)
+        auxRows = runCatching {
+            AuxRows.valueOf(prefs.getString(p + KEY_AUX_ROWS, null) ?: "")
+        }.getOrDefault(if (folded) AuxRows.TERMINAL else AuxRows.ALL)
+        // 프로파일과 무관한 전역 설정도 여기서 함께 갱신한다.
+        holdMs = prefs.getInt(KEY_HOLD_MS, 400).toLong()
+    }
+
+    /** 키보드가 떠 있는 채로 접거나 펼치면 즉시 해당 프로파일로 전환. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        loadProfile()
+    }
+
+    /**
+     * 커서/선택 변화 추적. 선택영역 존재 여부를 기억하고, 한글 조합 중에
+     * 사용자가 터치 등으로 커서를 조합 영역 밖으로 옮기면 조합을 그 자리에서
+     * 확정하고 오토마타를 리셋한다 — 안 그러면 다음 자모가 멀리 있는 이전
+     * 글자에 합쳐지는 버그가 생긴다. (정상 조합 중에는 커서가 항상 조합
+     * 영역(candidates) 끝에 온다.)
+     */
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int,
+        newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
+        )
+        hasSelection = newSelStart != newSelEnd
+        if (!composer.isEmpty &&
+            (candidatesStart == -1 || newSelStart != candidatesEnd || newSelEnd != candidatesEnd)
+        ) {
+            composer.flush()  // 글자는 이미 에디터에 있으므로 상태만 리셋하고
+            currentInputConnection?.finishComposingText()  // 조합 영역을 확정한다.
+        }
     }
 
     /**
@@ -155,16 +285,54 @@ class ImeService : InputMethodService(),
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        persistTypoStats()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         super.onFinishInputView(finishingInput)
+    }
+
+    /** 글자 키 터치 지점 기록(현재 레이아웃 버킷). 50타마다 저장. */
+    private fun onCharTouch(label: String, fx: Float, fy: Float) {
+        typo().onCharPress(label, fx, fy, SystemClock.uptimeMillis())
+        if (++typoDirty >= 50) persistTypoStats()
+    }
+
+    /** 버킷별 통계를 하나의 JSON 오브젝트({bucket: 통계})로 저장. */
+    private fun persistTypoStats() {
+        if (typoDirty == 0) return
+        typoDirty = 0
+        val root = JSONObject()
+        typoTrackers.forEach { (bucket, t) -> root.put(bucket, JSONObject(t.toJson())) }
+        prefs.edit().putString(KEY_TYPO_STATS, root.toString()).apply()
+    }
+
+    /** 저장된 버킷별 통계를 읽는다. 예전 단일 형식이면 korean_unfolded 로 승격. */
+    private fun loadTypoStats() {
+        typoTrackers.clear()
+        val raw = prefs.getString(KEY_TYPO_STATS, null) ?: return
+        runCatching {
+            val root = JSONObject(raw)
+            if (root.has("taps") || root.has("confusion")) {
+                // 구형: 통계 오브젝트가 최상단. 기본 버킷으로 옮긴다.
+                typoTrackers["korean_unfolded"] = TypoTracker().apply { loadJson(raw) }
+            } else {
+                root.keys().forEach { bucket ->
+                    typoTrackers[bucket] = TypoTracker().apply { loadJson(root.getJSONObject(bucket).toString()) }
+                }
+            }
+        }
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         composer.flush()
         shiftState = ShiftState.OFF
-        // 숫자/전화 입력칸이면 기호 자판으로 시작
+        ctrlState = ShiftState.OFF
+        selectActive = false
+        // 입력칸이 뜰 때마다 기본은 한글 자판(마지막 자판을 유지하지 않는다).
+        mode = KeyboardMode.KOREAN
+        previousMode = KeyboardMode.KOREAN
+        // 숫자/전화 입력칸이면 기호 자판으로 시작(?123 토글은 한글로 돌아온다).
         attribute?.let {
             val cls = it.inputType and InputType.TYPE_MASK_CLASS
             if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE) {
@@ -179,6 +347,7 @@ class ImeService : InputMethodService(),
     }
 
     override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         runCatching { clipboard.removePrimaryClipChangedListener(clipListener) }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
@@ -191,12 +360,73 @@ class ImeService : InputMethodService(),
             val text = clipboard.primaryClip
                 ?.takeIf { it.itemCount > 0 }
                 ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
-            if (!text.isNullOrEmpty()) {
+            if (!text.isNullOrEmpty() && text !in snippets) {
                 clipHistory.remove(text)
                 clipHistory.add(0, text)
                 while (clipHistory.size > 20) clipHistory.removeAt(clipHistory.size - 1)
+                persistClips()
             }
         }
+    }
+
+    /** 클립 항목 길게 누름: 스니펫(오른쪽 열, 영구 보관)으로 이동 = 고정. */
+    private fun onClipLong(text: String) {
+        clipHistory.remove(text)
+        if (text !in snippets) snippets.add(0, text)
+        persistClips()
+        persistSnippets()
+    }
+
+    /** 스니펫 길게 누름: 클립보드 히스토리(왼쪽 열)로 되돌린다. */
+    private fun onSnippetLong(text: String) {
+        snippets.remove(text)
+        clipHistory.remove(text)
+        clipHistory.add(0, text)
+        persistClips()
+        persistSnippets()
+    }
+
+    /** 히스토리를 저장해 프로세스가 죽어도 유지한다. */
+    private fun persistClips() {
+        prefs.edit()
+            .putString(KEY_CLIP_HISTORY, JSONArray(clipHistory.toList()).toString())
+            .apply()
+    }
+
+    private fun persistSnippets() {
+        prefs.edit()
+            .putString(KEY_SNIPPETS, JSONArray(snippets.toList()).toString())
+            .apply()
+    }
+
+    /** 예전 '📌 고정' 항목을 스니펫으로 1회 승격(개념 통합 마이그레이션). */
+    private fun migrateLegacyPins() {
+        val legacy = readStringList(KEY_CLIP_PINNED)
+        if (legacy.isEmpty()) return
+        legacy.filter { it !in snippets }.forEach { snippets.add(0, it) }
+        prefs.edit().remove(KEY_CLIP_PINNED).apply()
+        persistSnippets()
+    }
+
+    private fun readStringList(key: String): List<String> = runCatching {
+        val raw = prefs.getString(key, null) ?: return@runCatching emptyList()
+        val arr = JSONArray(raw)
+        List(arr.length()) { arr.getString(it) }
+    }.getOrDefault(emptyList())
+
+    private fun loadClips() {
+        clipHistory.addAll(readStringList(KEY_CLIP_HISTORY))
+    }
+
+    /** 설정 앱에서 편집한 스니펫을 (재)로드한다. */
+    private fun loadSnippets() {
+        snippets.clear()
+        snippets.addAll(readStringList(KEY_SNIPPETS))
+    }
+
+    /** 커스텀 레이아웃 JSON 을 (재)로드한다. 없거나 파싱 실패하면 기본 배열로. */
+    private fun loadCustomLayout() {
+        customLayouts = LayoutConfig.parse(prefs.getString(KEY_CUSTOM_LAYOUT, null))
     }
 
     // ---- 입력 처리 ----
@@ -219,9 +449,13 @@ class ImeService : InputMethodService(),
 
     private fun onCharKey(text: String) {
         val ic = currentInputConnection ?: return
+        // 글자 입력은 선택영역을 대치하므로 선택 모드를 먼저 끈다.
+        // (Ctrl 조합도 마찬가지 — 선택 후 Ctrl+C 가 Shift 없이 온전히 나가야 한다.)
+        val wasSelecting = selectActive
+        selectActive = false
         // Ctrl/Alt 조합: 다음 키를 실제 키이벤트로 보낸다. 터미널/원격에서 Ctrl+C 등.
         // 한글 자판이면 자모를 그 자리의 QWERTY 키로 매핑해 조합을 유지한다(ㅂ→Q 등).
-        if (ctrlActive || altActive) {
+        if (ctrlState != ShiftState.OFF || altActive) {
             commitComposing()
             val keyCode = latinKeyCode(text) ?: jamoKeyCode(text)
             if (keyCode != null) sendKeyWithMeta(ic, keyCode, activeMeta())
@@ -230,8 +464,18 @@ class ImeService : InputMethodService(),
             return
         }
         if (mode == KeyboardMode.KOREAN && text.isNotEmpty() && isJamo(text[0])) {
+            // 선택영역이 있으면 먼저 지운다 — setComposingText 는 에디터에 따라
+            // 선택영역을 대치하지 않고 커서 자리에만 끼어드는 경우가 있다.
+            // hasSelection(onUpdateSelection)은 비동기라 빠른 입력 시 아직 갱신
+            // 전일 수 있으므로, 선택 모드였는지 + 에디터 동기 조회까지 함께 본다.
+            val selectionExists = wasSelecting || hasSelection ||
+                !ic.getSelectedText(0).isNullOrEmpty()
             val committed = composer.input(text[0])
             ic.beginBatchEdit()
+            if (selectionExists) {
+                ic.commitText("", 1)
+                hasSelection = false
+            }
             if (committed.isNotEmpty()) ic.commitText(committed, 1)
             ic.setComposingText(composer.composing, 1)
             ic.endBatchEdit()
@@ -254,9 +498,12 @@ class ImeService : InputMethodService(),
             }
 
             ActionType.BACKSPACE -> {
+                typo().onBackspace(SystemClock.uptimeMillis())
                 if (composer.backspace()) {
                     ic.setComposingText(composer.composing, 1)
                 } else {
+                    // 선택 중이면 선택 모드를 끄고 플레인 백스페이스 → 선택영역 삭제.
+                    selectActive = false
                     // 원격 데스크탑에서도 먹도록 실제 백스페이스 키 이벤트를 보낸다.
                     // (Ctrl+Backspace 는 단어 삭제)
                     sendKeyWithMeta(ic, KeyEvent.KEYCODE_DEL, activeMeta())
@@ -264,17 +511,43 @@ class ImeService : InputMethodService(),
                 }
             }
 
-            ActionType.CTRL -> ctrlActive = !ctrlActive
+            // Ctrl 3단계 순환: 해제 → 단일(한 번 쓰면 해제) → 잠금 → 해제
+            ActionType.CTRL -> ctrlState = when (ctrlState) {
+                ShiftState.OFF -> ShiftState.SINGLE
+                ShiftState.SINGLE -> ShiftState.LOCKED
+                ShiftState.LOCKED -> ShiftState.OFF
+            }
             ActionType.ALT -> altActive = !altActive
-            ActionType.CLIPBOARD -> showClipboard = !showClipboard
+            // 📋/✂ 는 각자 자기 모드를 토글한다(길게 누르면 서로 교차 전환).
+            ActionType.CLIPBOARD -> centerMode =
+                if (centerMode == CenterMode.CLIPBOARD) CenterMode.CURSOR
+                else CenterMode.CLIPBOARD
+            ActionType.SNIPPETS -> centerMode =
+                if (centerMode == CenterMode.SNIPPETS) CenterMode.CURSOR
+                else CenterMode.SNIPPETS
+
+            // 선택 모드 토글(커스텀 센터 패드의 '선택' 버튼).
+            ActionType.SELECT -> selectActive = !selectActive
+
+            // 전체선택/복사/붙여넣기/잘라내기/되돌리기: Ctrl 조합 키 이벤트를
+            // 그대로 전송(원격/터미널에서도 동작). 실행 후 선택 모드는 해제.
+            ActionType.SELECT_ALL -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_A)
+            ActionType.COPY -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_C)
+            ActionType.PASTE -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_V)
+            ActionType.CUT -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_X)
+            ActionType.UNDO -> sendCtrlShortcut(ic, KeyEvent.KEYCODE_Z)
 
             ActionType.SPACE -> {
+                typo().onOtherInput()
                 commitComposing()
                 ic.commitText(" ", 1)
+                selectActive = false
             }
 
             ActionType.ENTER -> {
+                typo().onOtherInput()
                 commitComposing()
+                selectActive = false
                 if (shifted) {
                     // 데스크탑처럼 Shift+Enter 는 (전송하지 않고) 줄바꿈만.
                     ic.commitText("\n", 1)
@@ -294,8 +567,9 @@ class ImeService : InputMethodService(),
 
             ActionType.LANGUAGE -> {
                 commitComposing()
-                mode = if (mode == KeyboardMode.ENGLISH) KeyboardMode.KOREAN
-                else KeyboardMode.ENGLISH
+                // 한글에서만 영문으로, 그 외(영문·기호)에서는 한글로 온다.
+                mode = if (mode == KeyboardMode.KOREAN) KeyboardMode.ENGLISH
+                else KeyboardMode.KOREAN
                 shiftState = ShiftState.OFF
             }
 
@@ -320,16 +594,19 @@ class ImeService : InputMethodService(),
 
     private fun commitText(text: String) {
         val ic = currentInputConnection ?: return
+        selectActive = false
         commitComposing()
         ic.commitText(text, 1)
     }
 
-    /** 클립보드 리스트에서 항목을 눌러 붙여넣기. 패널은 켜진 채 유지(연속 붙여넣기). */
+    /** 클립보드/스니펫 항목을 눌러 입력. 패널은 켜진 채 유지(연속 입력). */
     private fun onPasteClip(text: String) {
         val ic = currentInputConnection ?: return
+        selectActive = false
         commitComposing()
         ic.commitText(text, 1)
     }
+
 
     /** 조합 중인 한글이 있으면 확정한다. */
     private fun commitComposing() {
@@ -342,42 +619,97 @@ class ImeService : InputMethodService(),
 
     /** 조합 중인 글자를 확정하고 방향키(DPAD)로 커서를 옮긴다. Ctrl 조합이면 단어 이동 등. */
     private fun moveCursor(ic: android.view.inputmethod.InputConnection, keyCode: Int) {
+        typo().onOtherInput()
         commitComposing()
-        sendKeyWithMeta(ic, keyCode, activeMeta())
+        sendKeyWithMeta(ic, keyCode, activeMeta() or selectionMeta())
         clearMods()
     }
 
     /** Del/Home/End/PgUp/PgDn 등 하드웨어 키를 (Ctrl/Alt 조합과 함께) 전송. */
     private fun onKeyCodeKey(code: Int) {
         val ic = currentInputConnection ?: return
+        typo().onOtherInput()
         commitComposing()
-        sendKeyWithMeta(ic, code, activeMeta())
+        // 이동 키에만 선택(Shift)을 싣는다. 그 외(tab/del/esc 등)는 선택 모드를
+        // 끄고 평범하게 처리 — del 은 선택영역 삭제, esc 는 선택 취소가 된다.
+        val movement = code in MOVEMENT_CODES
+        if (!movement) selectActive = false
+        sendKeyWithMeta(ic, code, activeMeta() or (if (movement) selectionMeta() else 0))
         clearMods()
         if (shiftState == ShiftState.SINGLE) shiftState = ShiftState.OFF
     }
 
-    /** 현재 켜진 Ctrl/Alt 조합의 meta 비트. */
+    /** 현재 켜진 Ctrl/Alt(+시프트) 조합의 meta 비트. */
     private fun activeMeta(): Int {
         var m = 0
-        if (ctrlActive) m = m or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+        if (ctrlState != ShiftState.OFF) m = m or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         if (altActive) m = m or KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
+        if (shiftState != ShiftState.OFF) {
+            m = m or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
+        }
         return m
     }
 
+    /** 선택 모드의 Shift 비트 — 커서 이동 키에만 싣는다(Shift+방향키 = 선택). */
+    private fun selectionMeta(): Int =
+        if (selectActive) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
+
+    /** Ctrl+[keyCode] 단축키 전송(전체선택/복사/붙여넣기 등). 선택 모드는 해제. */
+    private fun sendCtrlShortcut(ic: android.view.inputmethod.InputConnection, keyCode: Int) {
+        commitComposing()
+        selectActive = false
+        sendKeyWithMeta(ic, keyCode, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
+        clearMods()
+    }
+
     private fun clearMods() {
-        ctrlActive = false
+        // Ctrl 단일은 한 번 쓰면 해제, 잠금은 유지(다시 눌러 해제).
+        if (ctrlState == ShiftState.SINGLE) ctrlState = ShiftState.OFF
         altActive = false
     }
 
-    /** keyCode 를 (선택적 meta 와 함께) 실제 하드웨어 키 이벤트로 전송. 원격에서도 동작. */
+    /**
+     * keyCode 를 (선택적 meta 와 함께) 실제 하드웨어 키 이벤트로 전송.
+     *
+     * 원격 데스크톱(RDP/Parsec 등)은 단일 키 이벤트에 실린 meta 비트만으로는
+     * Ctrl/Alt/Shift 를 '눌린 상태'로 보지 못한다. 그래서 모디파이어를 실제
+     * 키 DOWN 으로 먼저 누르고 → 대상 키 down/up → 모디파이어를 역순으로 UP
+     * 하는 정식 시퀀스로 보낸다. 로컬 입력칸에서도 동일하게 동작한다.
+     */
     private fun sendKeyWithMeta(
         ic: android.view.inputmethod.InputConnection,
         keyCode: Int,
         meta: Int,
     ) {
-        val now = SystemClock.uptimeMillis()
-        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, meta))
-        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, meta))
+        val t = SystemClock.uptimeMillis()
+        fun send(action: Int, code: Int, m: Int) =
+            ic.sendKeyEvent(KeyEvent(t, t, action, code, 0, m))
+
+        // 눌러야 할 모디파이어(키코드, meta 비트) 목록. 누른 순서대로 meta 를 쌓는다.
+        val mods = buildList {
+            if (meta and KeyEvent.META_CTRL_ON != 0)
+                add(KeyEvent.KEYCODE_CTRL_LEFT to (KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON))
+            if (meta and KeyEvent.META_ALT_ON != 0)
+                add(KeyEvent.KEYCODE_ALT_LEFT to (KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON))
+            if (meta and KeyEvent.META_SHIFT_ON != 0)
+                add(KeyEvent.KEYCODE_SHIFT_LEFT to (KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+        }
+        if (mods.isEmpty()) {
+            send(KeyEvent.ACTION_DOWN, keyCode, 0)
+            send(KeyEvent.ACTION_UP, keyCode, 0)
+            return
+        }
+        var acc = 0
+        for ((code, bit) in mods) {
+            acc = acc or bit
+            send(KeyEvent.ACTION_DOWN, code, acc)   // 모디파이어 누름
+        }
+        send(KeyEvent.ACTION_DOWN, keyCode, acc)    // 대상 키
+        send(KeyEvent.ACTION_UP, keyCode, acc)
+        for ((code, bit) in mods.asReversed()) {
+            acc = acc and bit.inv()
+            send(KeyEvent.ACTION_UP, code, acc)     // 모디파이어 뗌(역순)
+        }
     }
 
     /** 문자를 Ctrl/Alt 조합에 쓸 하드웨어 keyCode 로 매핑(영문/숫자만). */
@@ -399,14 +731,21 @@ class ImeService : InputMethodService(),
     }
 
     /**
-     * 길게 누름 처리. 한/A 를 길게 누르면 Windows 원격 등 호스트의 한/영을
-     * 토글하도록 오른쪽 Alt(한/영) 키 이벤트를 보낸다.
+     * 길게 누름 처리.
+     * 한/A: Windows 원격 등 호스트의 한/영 토글(오른쪽 Alt 키 이벤트).
+     * 📋/✂: 서로의 모드로 교차 전환.
      */
     private fun onKeyLong(key: Key) {
-        if (key is Key.Action && key.type == ActionType.LANGUAGE) {
-            val ic = currentInputConnection ?: return
-            commitComposing()
-            sendKeyWithMeta(ic, KeyEvent.KEYCODE_ALT_RIGHT, 0)
+        if (key !is Key.Action) return
+        when (key.type) {
+            ActionType.LANGUAGE -> {
+                val ic = currentInputConnection ?: return
+                commitComposing()
+                sendKeyWithMeta(ic, KeyEvent.KEYCODE_ALT_RIGHT, 0)
+            }
+            ActionType.CLIPBOARD -> centerMode = CenterMode.SNIPPETS
+            ActionType.SNIPPETS -> centerMode = CenterMode.CLIPBOARD
+            else -> Unit
         }
     }
 
@@ -430,7 +769,26 @@ class ImeService : InputMethodService(),
 
     private companion object {
         const val KEY_PINNED = "pinned"
+        // 프로파일 접두어 + 항목 키. MainActivity 설정 화면과 키를 공유한다.
+        const val PROFILE_FOLDED = "folded_"
+        const val PROFILE_UNFOLDED = "unfolded_"
         const val KEY_SPLIT_GAP = "split_gap"
+        const val KEY_SPLIT_RATIO = "split_ratio"
+        const val KEY_KEY_HEIGHT = "key_height"
+        const val KEY_AUX_ROWS = "aux_rows"
+        const val KEY_CLIP_HISTORY = "clip_history"
+        const val KEY_CLIP_PINNED = "clip_pinned"
+        // MainActivity 스니펫 편집/오타 분석/레이아웃 편집 화면과 공유하는 키.
+        const val KEY_SNIPPETS = "snippets"
+        const val KEY_TYPO_STATS = "typo_stats"
+        const val KEY_CUSTOM_LAYOUT = "custom_layout"
+        const val KEY_HOLD_MS = "hold_ms"
+
+        // 선택(Shift)을 실을 수 있는 커서 이동 키. 그 외 키는 선택 모드를 해제한다.
+        val MOVEMENT_CODES = setOf(
+            KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.KEYCODE_MOVE_END,
+            KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN
+        )
 
         // 두벌식 자모 → 같은 물리 위치의 QWERTY 소문자.
         val JAMO_QWERTY = mapOf(
